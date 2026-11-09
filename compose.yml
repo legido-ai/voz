@@ -1,0 +1,58 @@
+# Reference compose for the voz stack. Deployment on this box uses `docker build`
+# + `docker run` against the Engine (see README), because the Engine cannot see
+# the Hermes workspace. This file documents the wiring.
+services:
+  voz-stt:
+    image: speech-to-text:current          # faster-whisper small, int8, Spanish
+    container_name: voz-stt
+    restart: unless-stopped
+    environment:
+      STT_MODEL: small
+      STT_LANGUAGE: es
+      STT_COMPUTE_TYPE: int8
+      STT_PRELOAD: "true"
+      OMP_NUM_THREADS: "2"
+    networks: [voz]
+
+  voz-tts:
+    image: voz-tts:current                 # Kokoro-82M int8, Apache-2.0
+    container_name: voz-tts
+    restart: unless-stopped
+    volumes:
+      - voz-models:/models:ro
+    environment:
+      TTS_MODEL_PATH: /models/kokoro-v1.0.int8.onnx
+      TTS_VOICES_PATH: /models/voices-v1.0.bin
+      OMP_NUM_THREADS: "2"
+    networks: [voz]
+
+  voz:
+    image: voz:current
+    container_name: voz
+    restart: unless-stopped
+    depends_on: [voz-stt, voz-tts]
+    environment:
+      STT_URL: http://voz-stt:9000
+      TTS_URL: http://voz-tts:9000
+      LLM_BASE: https://opencode.ai/zen/go/v1
+      LLM_MODEL: deepseek-v4.1-flash
+      OPENCODE_GO_API_KEY: ${OPENCODE_GO_API_KEY}
+      VOZ_COOKIE_SECRET: ${VOZ_COOKIE_SECRET}
+      VOZ_PASS_HASH: ${VOZ_PASS_HASH}
+    networks: [voz, edge]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.voz.rule: "Host(`voz.oci2.legido.com`)"
+      traefik.http.routers.voz.entrypoints: "websecure"
+      traefik.http.routers.voz.tls.certresolver: "le"
+      traefik.http.services.voz.loadbalancer.server.port: "9000"
+
+networks:
+  voz:
+    name: voz-net
+  edge:
+    external: true
+
+volumes:
+  voz-models:
+    name: voz-models
