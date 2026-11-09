@@ -43,6 +43,10 @@ VOICES: dict[str, tuple[str, str, object]] = {
     "es_m2": ("kokoro", "em_santa", "es"),
     "es_piper_f": ("piper", "es_ES-sharvard-medium", 1),
     "es_piper_m": ("piper", "es_ES-sharvard-medium", 0),
+    "es_davefx": ("piper", "es_ES-davefx-medium", None),
+    "es_mls10246": ("piper", "es_ES-mls_10246-low", None),
+    "es_mls9972": ("piper", "es_ES-mls_9972-low", None),
+    "es_carlfm": ("piper", "es_ES-carlfm-x_low", None),
 }
 
 _kokoro = None
@@ -133,10 +137,11 @@ def synth(text: str, voice: str | None, speed: float) -> np.ndarray:
         from piper.config import SynthesisConfig
 
         piper = load_piper(model)
+        kwargs = {"speaker_id": None if extra is None else int(extra)}
         try:
-            config = SynthesisConfig(speaker_id=int(extra), length_scale=1.0 / max(0.5, speed))
+            config = SynthesisConfig(length_scale=1.0 / max(0.5, speed), **kwargs)
         except TypeError:                     # older SynthesisConfig without length_scale
-            config = SynthesisConfig(speaker_id=int(extra))
+            config = SynthesisConfig(**kwargs)
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as handle:
             piper.synthesize_wav(text, handle, syn_config=config)

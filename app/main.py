@@ -36,7 +36,8 @@ SECRET = os.environ.get("VOZ_COOKIE_SECRET") or hashlib.sha256(os.urandom(32)).h
 PASS_HASH = os.environ.get("VOZ_PASS_HASH", "").strip().lower()
 MAX_TURNS = int(os.environ.get("VOZ_MAX_TURNS", "80"))
 MIN_UTTERANCE = float(os.environ.get("VOZ_MIN_UTTERANCE", "0.35"))
-VOICE_IDS = {"es_f", "es_m", "es_m2", "es_piper_f", "es_piper_m"}
+VOICE_IDS = {"es_f", "es_m", "es_m2", "es_piper_f", "es_piper_m",
+             "es_carlfm", "es_davefx", "es_mls10246", "es_mls9972"}
 DECODE_EVERY = 8                      # frames of 20 ms fed to the ASR before decoding
 
 app = FastAPI(title="voz", docs_url=None, redoc_url=None, openapi_url=None)
