@@ -28,7 +28,7 @@ LLM_KEY = os.environ.get("OPENCODE_GO_API_KEY", "")
 LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "900"))
 LLM_SESSION = os.environ.get("LLM_SESSION") or f"voz-{uuid.uuid4().hex[:12]}"
 
-VOICE = os.environ.get("VOZ_VOICE", "es_f")
+VOICE = os.environ.get("VOZ_VOICE", "es_piper_f")
 
 SYSTEM_PROMPT = (
     "Eres un asistente de voz en español de España. Hablas, no escribes: todo lo que dices "

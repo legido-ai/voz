@@ -17,7 +17,7 @@
   let state = 'idle', showCaptions = false, connectedAt = 0;
 
   const saved = {
-    voice: localStorage.getItem(LS.voice) || 'es_f',
+    voice: localStorage.getItem(LS.voice) || 'es_piper_f',
     speed: parseFloat(localStorage.getItem(LS.speed) || '1'),
     captions: localStorage.getItem(LS.captions) === '1',
   };
