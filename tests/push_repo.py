@@ -54,23 +54,18 @@ def api(path: str, method: str = "GET", body: dict | None = None, token: str = "
 
 
 def main() -> int:
-    status, body = api(f"/repos/{REPO}", token=app_jwt())
+    token = api(f"/app/installations/{INSTALLATION}/access_tokens", "POST",
+                token=app_jwt())[1]["token"]
+    status, body = api(f"/repos/{REPO}", token=token)
     if status == 200:
-        token = api(f"/app/installations/{INSTALLATION}/access_tokens", "POST",
-                    token=app_jwt())[1]["token"]
         print(f"repo exists: private={body['private']}")
     else:
-        token = api(f"/app/installations/{INSTALLATION}/access_tokens", "POST",
-                    token=app_jwt())[1]["token"]
         status, body = api("/orgs/legido-ai/repos", "POST",
                            {"name": "voz", "private": True,
                             "description": "Conversación por voz con OpenCode Go"}, token)
         print(f"repo created: {status} private={body.get('private')}")
         if status not in (200, 201):
             return 1
-
-    token = api(f"/app/installations/{INSTALLATION}/access_tokens", "POST",
-                token=app_jwt())[1]["token"]
 
     workdir = tempfile.mkdtemp(prefix="voz-push-")
     askpass = os.path.join(workdir, "askpass")
@@ -104,7 +99,7 @@ def main() -> int:
                     "commit", "-m", "feat(voz): voz 0.1.0 — conversación por voz con OpenCode Go"]),
         ("push", ["push", "-u", "origin", BRANCH]),
     ]
-    for label, args in steps:
+    for label, args in [step for step in steps if step]:
         if args is None:
             continue
         result = git(*args)

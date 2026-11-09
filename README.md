@@ -6,22 +6,23 @@ llamada externa es el LLM (OpenCode Go, `deepseek-v4.1-flash`).
 
 - Web app (PWA instalable en iPhone). Nada de modelo en el teléfono: el móvil es
   micrófono y altavoz.
-- STT: faster-whisper `base`/`small` int8, español, en `voz-stt`.
-- TTS: Kokoro-82M int8 (Apache-2.0), voz `ef_dora`, en `voz-tts`.
+- ASR: sherpa-onnx, zipformer `es-kroko` en streaming, dentro del proceso `voz`.
+- TTS: Kokoro-82M int8 (Apache-2.0) y Piper `es_ES-sharvard-medium` a elegir.
 - Orquestación: FastAPI + WebSocket en `voz`.
 
 ## Cómo funciona una frase
 
 ```
-iPhone ──PCM16 16 kHz por WebSocket──▶ voz (VAD) ──WAV──▶ voz-stt (whisper)
-                                          │
-                                          ├──▶ OpenCode Go / deepseek-v4.1-flash (SSE, solo texto)
-                                          │
-                                          └──▶ voz-tts (Kokoro) ──PCM16 24 kHz──▶ iPhone
+iPhone ──PCM16 16 kHz por WebSocket──▶ voz ──┬─▶ sherpa-onnx (streaming, en proceso)
+                                             │
+                                             ├─▶ OpenCode Go / deepseek-v4.1-flash (SSE)
+                                             │
+                                             └─▶ voz-tts (Kokoro / Piper) ──PCM16 24 kHz──▶ iPhone
 ```
 
 - El VAD es de energía, con suelo de ruido adaptativo: 140 ms para abrir turno,
-  620 ms de silencio para cerrarlo.
+  500 ms de silencio para cerrarlo, pre-roll de 200 ms.
+- El ASR decodifica mientras hablas; al cerrar el turno sólo queda la cola.
 - El LLM se consume en streaming y se corta en frases: la primera se sintetiza
   mientras el resto todavía se está generando.
 - Interrumpir hablando: si el VAD detecta voz mientras el asistente habla (con
@@ -29,44 +30,47 @@ iPhone ──PCM16 16 kHz por WebSocket──▶ voz (VAD) ──WAV──▶ vo
 
 ## Medidas en esta caja (aarch64, 2 vCPU, sin GPU)
 
+Tabla completa y metodología en [`docs/medidas.md`](docs/medidas.md).
+
 | etapa | medida |
 |---|---|
-| Kokoro int8 (`ef_dora`), frase de 34 caracteres | 2,13 s de audio en 1,10 s → RTF 0,52 |
-| Kokoro int8, párrafo de 12,5 s | RTF 0,47-0,73 |
-| Kokoro fp32 (mismo texto) | RTF 0,98-1,27 → descartado |
-| faster-whisper small int8, 2,1 s de audio | ~6 s → descartado para conversación |
-| faster-whisper base int8 | ver `docs/medidas.md` |
-
-El fp32 y el `small` se descartaron por medida, no por intuición: en dos núcleos
-ARM no llegan al ritmo de una conversación.
+| ASR sherpa streaming | 0,10-0,51 s por frase (RTF 0,05-0,11) |
+| ASR faster-whisper `small` int8 | 4,97 s por frase → descartado |
+| TTS Kokoro int8 | RTF 0,47-0,73 · primera frase 1,4 s |
+| TTS Kokoro fp32 | RTF 1,04-1,27 → descartado |
+| TTS Piper | RTF 0,11-0,13 · primera frase 0,3 s |
+| LLM TTFT (`thinking=false`) | 0,8-1,7 s (2,2-2,5 s si razona) |
+| **fin de voz → primer audio** | **1,8-1,9 s (Piper) · 2,8 s (Kokoro)** |
 
 ## Servicios
 
 | contenedor | imagen | red | puerto interno |
 |---|---|---|---|
-| `voz-stt` | `voz-stt:current` | `voz-net` | 9000 |
 | `voz-tts` | `voz-tts:current` | `voz-net` | 9000 |
 | `voz` | `voz-app:current` | `voz-net`, `edge` | 9000 |
 
 Solo `voz` está en `edge`, con las etiquetas de Traefik para
-`voz.oci2.legido.com`. Los pesos viven en el volumen `voz-models`.
+`voz.oci2.legido.com`. Los pesos (Kokoro, Piper, zipformer) y las muestras de
+prueba viven en el volumen `voz-models`.
+
+`stt/` contiene el servicio faster-whisper heredado: no se despliega, queda como
+alternativa (`STT_URL=http://voz-stt:9000`) si alguna vez falla el streaming.
 
 ## Desplegar
 
 ```sh
-docker network create voz-net                     # una vez
+docker network create voz-net docker network create voz-net voz-models        # una vezdocker network create voz-net voz-models        # una vez docker volume create voz-models   # una vez
 
-docker build -t voz-stt:current ./stt
 docker build -t voz-tts:current ./tts
 docker build -t voz-app:current ./app
 
-docker run -d --name voz-stt --restart unless-stopped --network voz-net voz-stt:current
 docker run -d --name voz-tts --restart unless-stopped --network voz-net \
-  -v voz-models:/models:ro voz-tts:current
+  -v voz-models:/models:ro -e OMP_NUM_THREADS=2 voz-tts:current
 
 docker run -d --name voz --restart unless-stopped \
   --network voz-net --network edge \
-  -e STT_URL=http://voz-stt:9000 -e TTS_URL=http://voz-tts:9000 \
+  -v voz-models:/models:ro \
+  -e STT_URL= -e TTS_URL=http://voz-tts:9000 \
   -e LLM_BASE=https://opencode.ai/zen/go/v1 -e LLM_MODEL=deepseek-v4.1-flash \
   -e OPENCODE_GO_API_KEY -e VOZ_COOKIE_SECRET -e VOZ_PASS_HASH \
   -l traefik.enable=true \
@@ -77,22 +81,35 @@ docker run -d --name voz --restart unless-stopped \
   voz-app:current
 ```
 
+Contenido del volumen `voz-models`:
+
+```
+/models/kokoro-v1.0.int8.onnx   /models/voices-v1.0.bin
+/models/piper/es_ES-sharvard-medium.onnx(+.json)
+/models/sherpa/{encoder,decoder,joiner}.onnx, tokens.txt
+```
+
 ## Acceso
 
 Un solo usuario: `VOZ_PASS_HASH` es el SHA-256 del código de acceso. Sin ese
 código configurado la app queda abierta (solo para desarrollo). La cookie de
 sesión va firmada con `VOZ_COOKIE_SECRET` y caduca a los 60 días. Hay un límite
 de 8 intentos fallidos por IP cada 10 minutos y un tope de 80 turnos por sesión.
+La clave del LLM vive solo en el entorno del contenedor: nunca llega al navegador.
 
 ## Ajustes de la app
 
-Voz (Dora, Álex, Santa), ritmo (0,8-1,2) y transcripción opcional. La
-transcripción está apagada por defecto: la app es voz, no chat.
+- Voz: Dora, Álex, Santa (Kokoro, naturales) o Piper (femenina/masculina, rápidas).
+- Ritmo 0,8-1,2 y transcripción opcional (apagada por defecto: la app es voz).
 
 ## Tests
 
 ```sh
+# servicios sueltos: TTS + ASR
 docker run --rm -i --network voz-net python:3.12-slim python - < tests/smoke.py
-```
 
-`tests/turn.py` hace un turno completo por WebSocket y escribe el audio devuelto.
+# turno completo por WebSocket (WAV dentro del volumen voz-models)
+docker run --rm -i --network voz-net -v voz-models:/models \
+  -e COOKIE="voz_session=<token>" -e WAV=/models/tests/turn-long.wav \
+  python:3.12-slim sh -c 'pip install -q websockets; python -' < tests/turn.py
+```
