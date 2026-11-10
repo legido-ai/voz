@@ -273,7 +273,9 @@ class Session:
         event = self.vad.push(frame, speaking=self.state == "speak")
         self.seen += 1
         if self.seen == 50:      # ~1 s of audio: proves the phone is actually feeding us
-            print(f"audio: 1s received, rms={self.vad.level:.4f}", flush=True)
+            level = self.vad.level
+            note = " (silence: mic blocked or context created outside a gesture)" if level < 0.002 else ""
+            print(f"audio: 1s received, rms={level:.4f}{note}", flush=True)
 
         if self.asr:
             self.asr.feed(self.stream, frame)

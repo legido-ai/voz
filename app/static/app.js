@@ -95,6 +95,8 @@
     return out;
   }
 
+  let silentSince = 0;
+
   function analyse() {
     if (!analyser) return;
     const data = new Uint8Array(analyser.fftSize);
@@ -102,6 +104,17 @@
     let peak = 0;
     for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i] - 128));
     const level = Math.min(1, peak / 90);
+    // iOS hands us silence when the context was created outside a gesture, or when the
+    // mic is muted. Say so instead of pretending to listen.
+    if (peak === 0) {
+      if (!silentSince) silentSince = Date.now();
+      else if (Date.now() - silentSince > 4000 && state === 'listen') {
+        statusEl.textContent = 'Micrófono sin señal · toca para reintentar';
+        silentSince = Date.now();
+      }
+    } else {
+      silentSince = 0;
+    }
     mic.style.transform = state === 'listen' ? `scale(${1 + level * 0.06})` : '';
     if (!active) mic.style.transform = '';
   }
@@ -190,22 +203,29 @@
     netState('busy');
     setState('listen', 'Reconectando…');
     openSocket();
+    // Auth comes after the microphone exists: minting may take a round trip, and the
+    // socket no longer waits on it.
+    if (phase === 'auth' && !challenge) needChallenge();
   }
 
   /* ------------------------------------------------------------------- session */
 
   async function start() {
     if (active) return;
-    if (phase === 'auth' && !challenge) {
-      const opened = await needChallenge();
-      if (opened) return start();          // session appeared meanwhile: just talk
+    // iOS only grants audio inside the tap's own task. Anything awaited before this —
+    // a challenge request, for instance — loses the gesture and the phone then feeds
+    // digital silence (seen in production: rms 0.0000 with a socket wide open).
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (error) {
+      setState('idle', 'Sin audio');
+      return;
     }
     active = true;
     netState('busy');
     setState('listen', 'Conectando…');
 
     try {
-      ctx = new (window.AudioContext || window.webkitAudioContext)();
       await ctx.resume();
       ratio = ctx.sampleRate / IN_RATE;
 

@@ -135,3 +135,14 @@ def test_visibility_change_does_not_hang_up_and_socket_reconnects():
 def test_static_assets_are_cache_busted():
     source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
     assert "?v=" in source and "st_mtime" in source
+
+
+def test_audio_context_is_created_before_any_await():
+    js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
+    start = js.split("async function start()", 1)[1]
+    ctx_at = start.index("new (window.AudioContext")
+    # Nothing may be awaited before the AudioContext exists, or iOS mutes the mic
+    # (checking statements, not the prose in the comment above them).
+    assert not [l for l in start[:ctx_at].splitlines() if l.strip().startswith("await")]
+    # And the challenge must not block the microphone: socket first, mint after.
+    assert start.index("openSocket();") < start.index("needChallenge();")
