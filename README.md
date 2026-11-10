@@ -110,6 +110,19 @@ No hay contraseña ni pantalla de login. Al abrir la web se pide un desafío a
 (chat configurado en `MFA_CHAT_ID`) y guarda solo `sha256(nonce:código)`. La web
 recibe el **id del desafío, nunca el número**.
 
+El desafío **no se genera al cargar la página**: se pide en el primer toque del
+micrófono, que es intención deliberada. Cualquiera puede hacer `GET /` sin provocar
+un mensaje en el teléfono. Reglas de emisión:
+
+- Por cliente: máximo 3 desafíos cada 10 min (`VOZ_CHALLENGE_MAX`,
+  `VOZ_CHALLENGE_WINDOW`) y, dentro de los 4 min siguientes, se **reutiliza** el
+  vivo en vez de volver a empujar (`VOZ_CHALLENGE_REUSE`).
+- En `voz-mfa`, además, un cooldown global de 20 s entre envíos y 6 por hora
+  (`MFA_SEND_COOLDOWN`, `MFA_SEND_HOURLY`): si se supera, el desafío existe pero no
+  se envía. Así ni un escáner ni un bucle pueden inundar Telegram.
+- Cada emisión registra la IP del cliente (`challenge: minted for <ip>`), que es la
+  única atribución disponible: el Traefik del borde no guarda log de accesos.
+
 El usuario lo dice en voz alta en la misma frase que su petición (*"Necesitas
 autenticarte… código 4 7 2 9 1 3, enciende la música"*); el transcript completo
 se manda a `POST /api/auth/verify`, que busca un tramo de 6 dígitos válido. Con

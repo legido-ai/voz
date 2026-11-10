@@ -45,8 +45,15 @@ MSG_FAIL = "Error en la autenticación."
 app = FastAPI(title="voz", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
-# One live challenge per client is enough; older ones are abandoned, not reused.
-_challenges: dict[str, str] = {}      # client key -> challenge id
+# A challenge pushes a Telegram message, so minting is rate limited and a live one is
+# reused instead of re-pushed. Nothing here mints on page load: the client asks on the
+# first mic tap, because an anonymous GET must not be able to ring a phone.
+CHALLENGE_MAX = int(os.environ.get("VOZ_CHALLENGE_MAX", "3"))
+CHALLENGE_WINDOW = int(os.environ.get("VOZ_CHALLENGE_WINDOW", "600"))
+CHALLENGE_REUSE = int(os.environ.get("VOZ_CHALLENGE_REUSE", "240"))
+
+_challenges: dict[str, tuple[str, float]] = {}   # client key -> (challenge id, minted at)
+_minted: dict[str, list[float]] = {}             # client key -> mint timestamps
 
 
 def _client_key(request: Request) -> str:
@@ -63,19 +70,53 @@ async def _session_from(request: Request) -> str | None:
     return None
 
 
+def _recent(key: str, now: float) -> list[float]:
+    """Mint timestamps for this client inside the window (old ones dropped)."""
+    stamps = [t for t in _minted.get(key, []) if now - t < CHALLENGE_WINDOW]
+    if stamps:
+        _minted[key] = stamps
+    else:
+        _minted.pop(key, None)
+    return stamps
+
+
 # ------------------------------------------------------------------------- auth
 
 
 @app.get("/api/auth/challenge")
 async def auth_challenge(request: Request):
-    """Create a challenge (which pushes the number to Telegram) for this client."""
+    """Mint a challenge on intent, rate limited per client.
+
+    Reuses a challenge minted for this client in the last CHALLENGE_REUSE seconds so a
+    reload or a double tap cannot ring the phone twice; refuses beyond
+    CHALLENGE_MAX mints per CHALLENGE_WINDOW.
+    """
     if await _session_from(request):
         return {"needs_auth": False, "message": ""}
-    created = await MFA.new_challenge()
+    key = _client_key(request)
+    now = time.time()
+    live = _challenges.get(key)
+    if live and now - live[1] < CHALLENGE_REUSE:
+        print(f"challenge: reused for {key}", flush=True)
+        return {"needs_auth": True, "message": MSG_AUTH, "reused": True,
+                "challenge": {"id": live[0], "expires_in": 0, "code_length": 6,
+                              "sent": True}}
+    stamps = _recent(key, now)
+    if len(stamps) >= CHALLENGE_MAX:
+        print(f"challenge: rate limited {key} ({len(stamps)} in window)", flush=True)
+        return JSONResponse({"needs_auth": True, "message": MSG_FAIL, "retry_after":
+                             int(CHALLENGE_WINDOW - (now - stamps[0]))}, status_code=429)
+    created = await MFA.new_challenge(client_ip=key)
     if created is None:
         return JSONResponse({"needs_auth": True, "message": MSG_FAIL, "challenge": None},
                             status_code=503)
-    _challenges[_client_key(request)] = created.id
+    stamps.append(now)
+    _minted[key] = stamps
+    # Only cache as reusable when the number actually left: otherwise the client would
+    # sit on a challenge the user cannot answer until the reuse window expires.
+    if created.sent:
+        _challenges[key] = (created.id, now)
+    print(f"challenge: minted for {key} sent={1 if created.sent else 0}", flush=True)
     return {
         "needs_auth": True,
         "message": MSG_AUTH,
@@ -92,7 +133,8 @@ async def auth_verify(request: Request):
     except Exception:  # noqa: BLE001
         body = {}
     text = str(body.get("token") or "")
-    challenge_id = body.get("challenge") or _challenges.get(_client_key(request))
+    stored = _challenges.get(_client_key(request))
+    challenge_id = body.get("challenge") or (stored[0] if stored else None)
     verdict = await MFA.verify(text, challenge_id)
     if not verdict.ok:
         # The dead challenge cannot be reused: the client must ask for a new one.

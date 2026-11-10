@@ -63,11 +63,12 @@ class Verdict:
     expires_in: int = 0
 
 
-async def new_challenge() -> Challenge | None:
+async def new_challenge(client_ip: str = "") -> Challenge | None:
     """Ask voz-mfa for a fresh challenge. None when the service is unreachable."""
     try:
+        headers = {"x-client-ip": client_ip} if client_ip else {}
         response = await client().get(f"{os.environ.get('MFA_URL', MFA_URL).rstrip('/')}"
-                                       "/api/auth/challenge")
+                                       "/api/auth/challenge", headers=headers)
         response.raise_for_status()
         body = response.json()
     except Exception as error:  # noqa: BLE001 - fail closed, never crash a turn

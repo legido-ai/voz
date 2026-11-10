@@ -30,6 +30,14 @@
   tiene formulario donde aplicarse.
 - La credencial `OPENCODE_GO_API_KEY` en el contenedor `voz`.
 
+### Security
+- **Un `GET` anónimo ya no puede hacer sonar el teléfono.** El desafío se genera en el
+  primer toque del micrófono, no al cargar la página (FR-009 revisado).
+- Emisión limitada por cliente (3/10 min) con reutilización del desafío vivo durante
+  4 min, y en `voz-mfa` cooldown global de 20 s / 6 por hora; una emisión suprimida
+  no se cachea como reutilizable.
+- Cada emisión y cada fallo de verificación registran la IP del cliente.
+
 ### Fixed
 - El relay apuntaba a `host.docker.internal`, que resuelve al gateway de Docker y no
   al contenedor de Hermes; ahora usa `http://hermes:8642/p/voz/v1` y el contenedor se

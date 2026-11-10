@@ -70,3 +70,24 @@ def test_a_wrong_code_reports_the_exact_failure_line():
 def test_sign_off_marker_is_never_spoken():
     assert pipeline.speakable("Cadena de voz operativa. ✅ I'm done") == "Cadena de voz operativa."
     assert pipeline.speakable("Listo, he terminado.") == "Listo, he terminado."
+
+
+def test_challenge_is_rate_limited_and_reused_per_client():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    body = source.split("async def auth_challenge", 1)[1].split('@app.post("/api/auth/verify"', 1)[0]
+    assert "CHALLENGE_MAX" in body and "429" in body
+    # a repeat inside the reuse window must not mint or push again
+    assert "reused" in body and "CHALLENGE_REUSE" in body
+
+
+def test_client_does_not_mint_a_challenge_on_load():
+    js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
+    boot = js.rsplit("})();", 2)[0][-600:]
+    assert "needChallenge()" not in boot
+    assert "checkSession()" in boot
+
+
+def test_a_suppressed_push_is_not_cached_as_reusable():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    body = source.split("async def auth_challenge", 1)[1].split('@app.post("/api/auth/verify"', 1)[0]
+    assert "if created.sent:" in body

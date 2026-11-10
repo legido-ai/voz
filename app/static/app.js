@@ -109,8 +109,21 @@
   // assistant itself (turn handshake), so it uses the same voice as every answer.
   async function speak(text) { if (text) caption(text); }
 
+  async function checkSession() {
+    const response = await fetch('/api/session', { cache: 'no-store' });
+    phase = response.ok ? 'open' : 'auth';
+    return phase === 'open';
+  }
+
+  // Mint on intent only. The server reuses a live challenge for this client, so a
+  // second tap does not push a second Telegram message.
   async function needChallenge() {
     const response = await fetch('/api/auth/challenge', { cache: 'no-store' });
+    if (response.status === 429) {
+      phase = 'auth';
+      setState('idle', 'Error en la autenticación.');
+      return false;
+    }
     const body = await response.json();
     if (!body.needs_auth) { phase = 'open'; return true; }
     phase = 'auth';
@@ -147,14 +160,18 @@
   async function newChallenge() {
     challenge = null;
     await fetch('/api/auth/challenge', { cache: 'no-store' })
-      .then((r) => r.json()).catch(() => null);
+      .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      .then((body) => { if (body && body.challenge) challenge = body.challenge; });
   }
 
   /* ------------------------------------------------------------------- session */
 
   async function start() {
     if (active) return;
-    if (phase === 'auth' && !challenge) await newChallenge();
+    if (phase === 'auth' && !challenge) {
+      const opened = await needChallenge();
+      if (opened) return start();          // session appeared meanwhile: just talk
+    }
     active = true;
     netState('busy');
     setState('listen', 'Conectando…');
@@ -342,5 +359,8 @@
   window.addEventListener('pagehide', () => { if (active) stop(true); });
 
   setState('idle', 'Toca y habla');
-  needChallenge().catch(() => { phase = 'auth'; });
+  // No challenge is minted on load: a challenge pushes a Telegram message, and an
+  // anonymous GET must not be able to ring the user's phone. It is minted on the
+  // first mic tap, which is deliberate intent.
+  checkSession().catch(() => { phase = 'auth'; });
 })();
