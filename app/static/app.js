@@ -15,6 +15,8 @@
   let playHead = 0, playing = new Set();
   let acc = new Float32Array(0), ratio = 3;
   let state = 'idle', showCaptions = false, connectedAt = 0;
+  let phase = 'auth';              // auth | open — governed by the voz-mfa challenge
+  let challenge = null;            // {id} while waiting for the spoken code
 
   const saved = {
     voice: localStorage.getItem(LS.voice) || 'es_piper_f',
@@ -101,10 +103,58 @@
     if (!active) mic.style.transform = '';
   }
 
+  /* --------------------------------------------------------------- auth (voz-mfa) */
+
+  // The greeting and the two auth lines are only text on screen. Audio comes from the
+  // assistant itself (turn handshake), so it uses the same voice as every answer.
+  async function speak(text) { if (text) caption(text); }
+
+  async function needChallenge() {
+    const response = await fetch('/api/auth/challenge', { cache: 'no-store' });
+    const body = await response.json();
+    if (!body.needs_auth) { phase = 'open'; return true; }
+    phase = 'auth';
+    challenge = body.challenge || null;
+    setState('idle', body.message || 'Necesitas autenticarte.');
+    speak(body.message || 'Necesitas autenticarte.');
+    return false;
+  }
+
+  // The code is verified server-side, in the same phrase as the request: the app never
+  // knows which six digits were sent to Telegram.
+  async function verify(token) {
+    try {
+      const response = await fetch('/api/auth/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, challenge: challenge && challenge.id }),
+      });
+      const body = await response.json();
+      if (body.ok) { phase = 'open'; return; }
+      phase = 'auth';
+      setState('idle', body.message || 'Error en la autenticación.');
+      speak(body.message || 'Error en la autenticación.');
+    } catch (e) {
+      phase = 'auth';
+      setState('idle', 'Error en la autenticación.');
+    }
+    // A used, expired or exhausted challenge is dead: ask for a new one, no reload.
+    await newChallenge();
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'stop' }));
+    setState('listen', 'Te escucho');
+    speak('Necesitas autenticarte.');
+  }
+
+  async function newChallenge() {
+    challenge = null;
+    await fetch('/api/auth/challenge', { cache: 'no-store' })
+      .then((r) => r.json()).catch(() => null);
+  }
+
   /* ------------------------------------------------------------------- session */
 
   async function start() {
     if (active) return;
+    if (phase === 'auth' && !challenge) await newChallenge();
     active = true;
     netState('busy');
     setState('listen', 'Conectando…');
@@ -198,6 +248,7 @@
         break;
       case 'heard':
         caption(message.text ? '“' + message.text + '”' : '');
+        if (phase === 'auth') verify(message.text || '');
         break;
       case 'partial':
         if (showCaptions) caption('… ' + message.text);
@@ -209,6 +260,12 @@
         break;
       case 'error':
         caption(message.msg || '');
+        break;
+      case 'auth_expired':
+        phase = 'auth';
+        setState('idle', message.msg || 'Necesitas autenticarte.');
+        stop(true);
+        needChallenge();
         break;
       case 'voice':
         break;
@@ -285,4 +342,5 @@
   window.addEventListener('pagehide', () => { if (active) stop(true); });
 
   setState('idle', 'Toca y habla');
+  needChallenge().catch(() => { phase = 'auth'; });
 })();

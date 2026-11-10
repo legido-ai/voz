@@ -1,202 +1,119 @@
-"""voz — talk to OpenCode Go with a natural voice, over a phone browser.
+"""voz — talk to the Hermes `voz` profile with a natural voice, over a phone browser.
 
-Browser  ──WebSocket (PCM16)──▶  this app  ──▶  OpenCode Go / deepseek-v4.1-flash
+Browser  ──WebSocket (PCM16)──▶  this app  ──▶  Hermes API server (profile `voz`)
                                     │
                                     ├── sherpa-onnx streaming ASR (in process)
-                                    └── voz-tts (Kokoro-82M) ──▶ PCM16 back
+                                    ├── voz-tts (Kokoro / Piper) ──▶ PCM16 back
+                                    └── voz-mfa (challenge ──▶ Telegram)
 
-The phone only captures and plays audio: no model runs on it, and the only
-outbound call is the subscription LLM.
+The phone only captures and plays audio, and the app holds no model credential:
+the only outbound authorisation is the API-server key of the `voz` profile.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import json
 import os
 import time
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import asr as A
-import authdb
+import mfa as MFA
 import pipeline as P
 
 HERE = Path(__file__).parent
 STATIC = HERE / "static"
 
 COOKIE = "voz_session"
-COOKIE_TTL = 60 * 86400
-SECRET = os.environ.get("VOZ_COOKIE_SECRET") or hashlib.sha256(os.urandom(32)).hexdigest()
-PASS_HASH = os.environ.get("VOZ_PASS_HASH", "").strip().lower()
+IDLE_MINUTES = int(os.environ.get("VOZ_IDLE_MINUTES", "15"))
 MAX_TURNS = int(os.environ.get("VOZ_MAX_TURNS", "80"))
 MIN_UTTERANCE = float(os.environ.get("VOZ_MIN_UTTERANCE", "0.35"))
 VOICE_IDS = {"es_f", "es_m", "es_m2", "es_piper_f", "es_piper_m",
              "es_carlfm", "es_davefx", "es_mls10246", "es_mls9972"}
 DECODE_EVERY = 8                      # frames of 20 ms fed to the ASR before decoding
 
+# Spec A1: two lines, and nothing else. No hint about Telegram, the code, or what to do.
+MSG_AUTH = "Necesitas autenticarte."
+MSG_FAIL = "Error en la autenticación."
+
 app = FastAPI(title="voz", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
-# Per-IP login protection: N consecutive wrong codes ban the IP for a while.
-# Behind Traefik the socket peer is the proxy, so the client is taken from
-# X-Forwarded-For, which Traefik sets itself (forwardedHeaders.insecure=false,
-# no trustedIPs => it discards whatever the client sent and writes the real peer).
-BAN_AFTER = int(os.environ.get("VOZ_BAN_AFTER", "3"))
-BAN_SECONDS = int(os.environ.get("VOZ_BAN_SECONDS", "300"))
-FAIL_WINDOW = int(os.environ.get("VOZ_FAIL_WINDOW", "600"))
+# One live challenge per client is enough; older ones are abandoned, not reused.
+_challenges: dict[str, str] = {}      # client key -> challenge id
 
-_failures: dict[str, tuple[int, float]] = {}   # ip -> (count, last failure)
-_bans: dict[str, float] = {}                   # ip -> banned until
+
+def _client_key(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    peer = forwarded.split(",")[-1].strip() if forwarded else (
+        request.client.host if request.client else "?")
+    return peer or "?"
+
+
+async def _session_from(request: Request) -> str | None:
+    token = request.cookies.get(COOKIE)
+    if token and await MFA.session_ok(token, touch=False):
+        return token
+    return None
 
 
 # ------------------------------------------------------------------------- auth
 
 
-def _token() -> str:
-    stamp = str(int(time.time()))
-    sig = hmac.new(SECRET.encode(), stamp.encode(), hashlib.sha256).hexdigest()[:32]
-    return f"{stamp}.{sig}"
+@app.get("/api/auth/challenge")
+async def auth_challenge(request: Request):
+    """Create a challenge (which pushes the number to Telegram) for this client."""
+    if await _session_from(request):
+        return {"needs_auth": False, "message": ""}
+    created = await MFA.new_challenge()
+    if created is None:
+        return JSONResponse({"needs_auth": True, "message": MSG_FAIL, "challenge": None},
+                            status_code=503)
+    _challenges[_client_key(request)] = created.id
+    return {
+        "needs_auth": True,
+        "message": MSG_AUTH,
+        "challenge": {"id": created.id, "expires_in": created.expires_in,
+                      "code_length": created.code_length, "sent": created.sent},
+    }
 
 
-def _valid(token: str | None) -> bool:
-    if not PASS_HASH:
-        return True                                    # no code configured: open (dev)
-    if not token or "." not in token:
-        return False
-    stamp, _, sig = token.partition(".")
-    expect = hmac.new(SECRET.encode(), stamp.encode(), hashlib.sha256).hexdigest()[:32]
+@app.post("/api/auth/verify")
+async def auth_verify(request: Request):
+    """Check a spoken transcript. Success mints a session cookie (idle TTL)."""
     try:
-        fresh = time.time() - int(stamp) < COOKIE_TTL
-    except ValueError:
-        return False
-    return fresh and hmac.compare_digest(sig, expect)
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    text = str(body.get("token") or "")
+    challenge_id = body.get("challenge") or _challenges.get(_client_key(request))
+    verdict = await MFA.verify(text, challenge_id)
+    if not verdict.ok:
+        # The dead challenge cannot be reused: the client must ask for a new one.
+        _challenges.pop(_client_key(request), None)
+        return JSONResponse({"ok": False, "message": MSG_FAIL}, status_code=401)
+    _challenges.pop(_client_key(request), None)
+    response = JSONResponse({"ok": True, "expires_in": verdict.expires_in})
+    response.set_cookie(COOKIE, verdict.session or "", max_age=IDLE_MINUTES * 60,
+                        httponly=True, secure=True, samesite="lax", path="/")
+    return response
 
 
-def _authed(request: Request) -> bool:
-    return _valid(request.cookies.get(COOKIE))
-
-
-def client_ip(request: Request) -> str:
-    """The real peer: rightmost X-Forwarded-For entry, else the socket peer."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        candidate = forwarded.split(",")[-1].strip()
-        if candidate:
-            return candidate
-    return request.client.host if request.client else "?"
-
-
-def _banned(ip: str) -> int:
-    """Seconds left on this IP's ban, 0 when it is not banned."""
-    until = _bans.get(ip)
-    if not until:
-        return 0
-    left = int(until - time.time())
-    if left <= 0:
-        _bans.pop(ip, None)
-        return 0
-    return left
-
-
-def _note_failure(ip: str) -> int:
-    """Count a wrong code; return the ban length applied, 0 if not banned yet."""
-    now = time.time()
-    count, last = _failures.get(ip, (0, now))
-    if now - last > FAIL_WINDOW:
-        count = 0
-    count += 1
-    _failures[ip] = (count, now)
-    if count >= BAN_AFTER:
-        _failures.pop(ip, None)
-        _bans[ip] = now + BAN_SECONDS
-        return BAN_SECONDS
-    return 0
-
-
-def _note_success(ip: str) -> None:
-    _failures.pop(ip, None)
-    _bans.pop(ip, None)
-
-
-LOGIN_PAGE = """<!doctype html><html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Voz</title><link rel="stylesheet" href="/static/styles.css"></head>
-<body class="login-body"><main class="login">
-<h1>Voz</h1><p class="muted">Habla con tu asistente.</p>
-<form method="post" action="/login">
-<input type="text" name="user" value="{user}" autocapitalize="none" autocorrect="off"
- spellcheck="false" autocomplete="username" placeholder="Usuario"{user_disabled}>
-<input type="password" name="password" inputmode="text" autocomplete="current-password"
- placeholder="Contraseña"{focus}>
-<button type="submit">Entrar</button></form>
-{error}</main></body></html>"""
-
-
-def _login_page(error: str = "") -> str:
-    shared = authdb.available()
-    return LOGIN_PAGE.format(
-        error=error,
-        user="",
-        user_disabled="" if shared else ' style="display:none"',
-        focus="" if shared else " autofocus",
-    )
-
-
-@app.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request):
-    if _authed(request):
-        return RedirectResponse("/", status_code=303)
-    return HTMLResponse(_login_page())
-
-
-@app.post("/login")
-async def login_submit(request: Request, password: str = Form(""),
-                       user: str = Form(""), code: str = Form("")):
-    ip = client_ip(request)
-    left = _banned(ip)
-    if left:
-        return HTMLResponse(
-            _login_page(
-                f'<p class="error">Demasiados intentos. Prueba en {left // 60 + 1} min.</p>'
-            ),
-            status_code=429, headers={"Retry-After": str(left)},
-        )
-    secret = password or code
-    if authdb.available():
-        ok = authdb.verify(user or authdb.DEFAULT_USER, secret)
-    else:
-        ok = bool(PASS_HASH) and hmac.compare_digest(
-            hashlib.sha256(secret.strip().encode()).hexdigest(), PASS_HASH
-        )
-    if ok:
-        _note_success(ip)
-        response = RedirectResponse("/", status_code=303)
-        response.set_cookie(COOKIE, _token(), max_age=COOKIE_TTL, httponly=True,
-                            secure=True, samesite="lax", path="/")
-        return response
-    banned_for = _note_failure(ip)
-    print(f"login: wrong credentials from {ip} (user={user or '-'})"
-          + (f" - banned {banned_for}s" if banned_for else ""), flush=True)
-    if banned_for:
-        return HTMLResponse(
-            _login_page('<p class="error">Demasiados intentos. Bloqueado 5 minutos.</p>'),
-            status_code=429, headers={"Retry-After": str(banned_for)},
-        )
-    return HTMLResponse(
-        _login_page('<p class="error">Usuario o contraseña incorrectos.</p>'), status_code=401
-    )
+@app.get("/api/session")
+async def session_state(request: Request):
+    ok = await _session_from(request) is not None
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 401)
 
 
 @app.get("/logout")
 async def logout():
-    response = RedirectResponse("/login", status_code=303)
+    response = RedirectResponse("/", status_code=303)
     response.delete_cookie(COOKIE, path="/")
     return response
 
@@ -206,8 +123,6 @@ async def logout():
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    if not _authed(request):
-        return RedirectResponse("/login", status_code=303)
     page = (STATIC / "index.html").read_text(encoding="utf-8")
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
@@ -219,13 +134,15 @@ async def healthz():
     model = A.instance()
     return JSONResponse({
         "ok": bool(tts and P.LLM_KEY and model),
-        "auth": "ai-usage accounts" if authdb.available() else "local code",
+        "auth": "voz-mfa",
         "asr": "sherpa-streaming" if model else "unavailable",
         "tts": tts,
         "whisper_fallback": stt,
-        "llm_key": bool(P.LLM_KEY),
+        "relay_key": bool(P.LLM_KEY),
+        "relay": P.LLM_BASE,
         "model": P.LLM_MODEL,
         "voice": P.VOICE,
+        "idle_minutes": IDLE_MINUTES,
     })
 
 
@@ -244,8 +161,10 @@ async def apple_icon():
 
 
 class Session:
-    def __init__(self, ws: WebSocket) -> None:
+    def __init__(self, ws: WebSocket, session_token: str = "") -> None:
         self.ws = ws
+        # The relay presents the MFA session, not a password: every turn re-checks it.
+        self.session = session_token or getattr(ws, "cookies", {}).get(COOKIE, "") or ""
         self.vad = P.VAD()
         self.asr = A.instance()
         self.stream = self.asr.stream() if self.asr else None
@@ -261,6 +180,7 @@ class Session:
         self.fed = 0
         self.last_partial = 0.0
         self.last_text = ""
+        self.expires = time.time() + IDLE_MINUTES * 60
 
     # -- transport ---------------------------------------------------------
 
@@ -331,6 +251,13 @@ class Session:
                 await self.state_to("listen")
 
     async def start_turn(self, text: str, audio: np.ndarray) -> None:
+        # Every executed turn renews the idle clock; an expired session ends the call.
+        if not await MFA.session_ok(self.session, touch=True):
+            await self.interrupt(tell_client=True)
+            await self.say(MSG_AUTH, self.gen, True)
+            await self.send_json({"t": "auth_expired", "msg": MSG_AUTH})
+            await self.state_to("listen")
+            return
         await self.interrupt(tell_client=True)
         if self.turns >= MAX_TURNS:
             await self.send_json({"t": "error", "msg": "Límite de turnos de esta sesión alcanzado."})
@@ -429,24 +356,28 @@ class Session:
 
 @app.on_event("startup")
 async def _startup() -> None:
-    if authdb.available():
-        print(f"auth: {authdb.count()} accounts from {authdb.AUTH_DB} "
-              f"(default user {authdb.DEFAULT_USER})", flush=True)
-    elif PASS_HASH:
-        print("auth: local access code", flush=True)
-    else:
-        print("auth: DISABLED - no code and no accounts database", flush=True)
+    if not P.LLM_KEY:
+        # Fail closed: a relay with no credential would answer "authentication" errors
+        # inside a voice turn, which is far harder to diagnose than refusing to boot.
+        raise RuntimeError("HERMES_API_KEY is not set: voz relays to the Hermes `voz` profile")
+    print(f"relay: {P.LLM_BASE} model={P.LLM_MODEL} idle={IDLE_MINUTES}min mfa={MFA.MFA_URL}",
+          flush=True)
 
 
 @app.websocket("/ws")
 async def voice_socket(ws: WebSocket):
-    if not _valid(ws.cookies.get(COOKIE)):
+    token = ws.cookies.get(COOKIE)
+    if not await MFA.session_ok(token, touch=False):
         await ws.close(code=4401)
         return
     await ws.accept()
-    session = Session(ws)
+    session = Session(ws, token or "")
     await session.send_json({"t": "ready", "in_rate": P.IN_RATE, "out_rate": 24000,
+                             "idle_minutes": IDLE_MINUTES,
                              "voice": session.voice, "asr": "sherpa" if session.asr else "whisper"})
+    # A turn is only authenticated once a spoken code matches a live challenge. Until
+    # then the assistant says one line and nothing else (spec A1).
+    await session.say(MSG_AUTH, session.gen, True)
     pending = bytearray()
     frame_bytes = P.FRAME_SAMPLES * 2
     try:
@@ -494,3 +425,4 @@ async def voice_socket(ws: WebSocket):
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     await P.aclose()
+    await MFA.aclose()
