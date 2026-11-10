@@ -122,3 +122,16 @@ def test_unauthenticated_turn_still_reports_the_transcript():
     turn = source.split("async def start_turn", 1)[1].split("async def respond", 1)[0]
     assert '"t": "heard"' in turn          # the client needs it to verify the code
     assert "auth_expired" in turn
+
+
+def test_visibility_change_does_not_hang_up_and_socket_reconnects():
+    js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
+    vis = js.split("'visibilitychange'", 1)[1].split("});", 1)[0]
+    assert "stop(" not in vis                    # switching to Telegram must not end the call
+    assert "reconnect()" in vis
+    assert "function openSocket" in js and "pong" in js
+
+
+def test_static_assets_are_cache_busted():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    assert "?v=" in source and "st_mtime" in source

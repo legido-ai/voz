@@ -17,6 +17,9 @@
   let state = 'idle', showCaptions = false, connectedAt = 0;
   let phase = 'auth';              // auth | open — governed by the voz-mfa challenge
   let challenge = null;            // {id} while waiting for the spoken code
+  let reconnects = 0;              // consecutive reconnects in this call
+  let lastPong = 0;                // heartbeat: a silent socket is a dead socket
+  let heartbeat = 0;
 
   const saved = {
     voice: localStorage.getItem(LS.voice) || 'es_piper_f',
@@ -180,6 +183,15 @@
       .then((body) => { if (body && body.challenge) challenge = body.challenge; });
   }
 
+  // Reopen the socket without tearing down the microphone or the audio graph.
+  function reconnect() {
+    if (!active) return;
+    reconnects += 1;
+    netState('busy');
+    setState('listen', 'Reconectando…');
+    openSocket();
+  }
+
   /* ------------------------------------------------------------------- session */
 
   async function start() {
@@ -232,23 +244,45 @@
       return;
     }
 
+    openSocket();
+
+    try {
+      if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+    } catch (e) { /* not fatal */ }
+
+    hangup.hidden = false;
+    $('hint').style.display = 'none';
+  }
+
+  // The socket alone is replaceable: the microphone, the audio graph and the UI state
+  // stay up, so a dropped connection is invisible unless it cannot be restored.
+  function openSocket() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
       connectedAt = Date.now();
+      reconnects = 0;
+      lastPong = Date.now();
       netState('live');
       setState('listen', 'Te escucho');
       ws.send(JSON.stringify({ t: 'voice', v: voiceEl.value }));
       ws.send(JSON.stringify({ t: 'speed', v: parseFloat(speedEl.value) }));
+      if (!heartbeat) heartbeat = window.setInterval(() => {
+        if (!ws || ws.readyState !== 1) return;
+        // A socket that stops answering is worse than a closed one: it stays "open"
+        // while swallowing everything the user says.
+        if (Date.now() - lastPong > 45000) { try { ws.close(); } catch (e) {} return; }
+        ws.send(JSON.stringify({ t: 'ping' }));
+      }, 15000);
     };
     ws.onclose = (event) => {
       netState('down');
-      if (active) {
-        if (event.code === 4401) { phase = 'auth'; }   // no login page any more
-        setState('idle', 'Desconectado · toca para reintentar');
-        stop(true);
-      }
+      if (!active) return;
+      if (event.code === 4401) { phase = 'auth'; }     // no login page any more
+      if (reconnects < 5) { reconnect(); return; }
+      setState('idle', 'Desconectado · toca para reintentar');
+      stop(true);
     };
     ws.onerror = () => netState('down');
     ws.onmessage = (event) => {
@@ -259,15 +293,9 @@
       }
       let message;
       try { message = JSON.parse(event.data); } catch (e) { return; }
+      if (message.t === 'pong') { lastPong = Date.now(); return; }
       handle(message);
     };
-
-    try {
-      if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
-    } catch (e) { /* not fatal */ }
-
-    hangup.hidden = false;
-    $('hint').style.display = 'none';
   }
 
   function handle(message) {
@@ -311,6 +339,8 @@
   async function stop(silent) {
     active = false;
     if (levelTimer) { clearInterval(levelTimer); levelTimer = 0; }
+    if (heartbeat) { clearInterval(heartbeat); heartbeat = 0; }
+    reconnects = 0;
     if (ws) { try { ws.close(); } catch (e) {} ws = null; }
     if (micNode) { try { micNode.disconnect(); } catch (e) {} micNode = null; }
     if (micSource) { try { micSource.disconnect(); } catch (e) {} micSource = null; }
@@ -370,8 +400,14 @@
     if (!showCaptions) caption('');
   });
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && active) stop(true);
+  // Switching to Telegram to read the code hides the tab. Hanging up here killed the
+  // socket and the microphone, and the page came back showing "Te escucho" with
+  // nothing behind it. Now the session survives; iOS may suspend audio, so resume it.
+  document.addEventListener('visibilitychange', async () => {
+    if (document.hidden) return;
+    if (ctx && ctx.state !== 'running') { try { await ctx.resume(); } catch (e) {} }
+    if (active && (!ws || ws.readyState > 1)) reconnect();
+    else if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'ping' }));
   });
   window.addEventListener('pagehide', () => { if (active) stop(true); });
 

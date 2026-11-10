@@ -168,6 +168,12 @@ async def logout():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     page = (STATIC / "index.html").read_text(encoding="utf-8")
+    # iOS Safari caches /static aggressively: a stale app.js is invisible to the user
+    # and behaves exactly like a broken microphone. The bust makes every deploy reach
+    # the phone on the next load.
+    for asset in ("app.js", "styles.css"):
+        stamp = int((STATIC / asset).stat().st_mtime)
+        page = page.replace(f"/static/{asset}", f"/static/{asset}?v={stamp}")
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 
@@ -224,6 +230,7 @@ class Session:
         self.fed = 0
         self.last_partial = 0.0
         self.last_text = ""
+        self.seen = 0
         self.expires = time.time() + IDLE_MINUTES * 60
 
     # -- transport ---------------------------------------------------------
@@ -264,6 +271,9 @@ class Session:
     async def on_audio(self, frame: np.ndarray) -> None:
         """One 20 ms frame: VAD decides the turn, the ASR decodes as it goes."""
         event = self.vad.push(frame, speaking=self.state == "speak")
+        self.seen += 1
+        if self.seen == 50:      # ~1 s of audio: proves the phone is actually feeding us
+            print(f"audio: 1s received, rms={self.vad.level:.4f}", flush=True)
 
         if self.asr:
             self.asr.feed(self.stream, frame)
@@ -436,6 +446,8 @@ async def voice_socket(ws: WebSocket):
     token = ws.cookies.get(COOKIE) or ""
     authorised = await MFA.session_ok(token, touch=False)
     await ws.accept()
+    print(f"ws: {ws.client.host if ws.client else '?'} connected "
+          f"(session={'yes' if authorised else 'no'})", flush=True)
     session = Session(ws, token or "")
     await session.send_json({"t": "ready", "in_rate": P.IN_RATE, "out_rate": 24000,
                              "idle_minutes": IDLE_MINUTES,
