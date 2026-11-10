@@ -5,13 +5,15 @@
   const $ = (id) => document.getElementById(id);
   const mic = $('mic'), statusEl = $('status'), captionEl = $('caption'),
         net = $('net'), panel = $('panel'), hangup = $('hangup'),
+        levelBar = $('levelbar'), levelFill = $('level'),
         voiceEl = $('voice'), speedEl = $('speed'), captionsEl = $('captions');
 
   const IN_RATE = 16000, OUT_RATE = 24000;
   const LS = { voice: 'voz.voice', speed: 'voz.speed', captions: 'voz.captions' };
 
   let ws = null, ctx = null, mediaStream = null, micNode = null, micSource = null;
-  let analyser = null, levelTimer = 0, wakeLock = null, active = false;
+  let analyser = null, levelTimer = 0, wakeLock = null, active = false, sink = null;
+  let silentFrames = 0, rearmed = false;
   let playHead = 0, playing = new Set();
   let acc = new Float32Array(0), ratio = 3;
   let state = 'idle', showCaptions = false, connectedAt = 0;
@@ -104,16 +106,24 @@
     let peak = 0;
     for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i] - 128));
     const level = Math.min(1, peak / 90);
+    if (levelFill) { levelBar.hidden = false; levelFill.style.width = Math.round(level * 100) + '%'; }
     // iOS hands us silence when the context was created outside a gesture, or when the
     // mic is muted. Say so instead of pretending to listen.
     if (peak === 0) {
+      silentFrames += 1;
+      // 1.5 s of digital silence: re-acquire the microphone once without any DSP
+      // before telling the user something is wrong.
+      // Never re-acquire on our own: a rearm mid-sentence kills a healthy stream
+      // (verified) and silence is the normal state while the user reads a code.
       if (!silentSince) silentSince = Date.now();
       else if (Date.now() - silentSince > 4000 && state === 'listen') {
         statusEl.textContent = 'Micrófono sin señal · toca para reintentar';
         silentSince = Date.now();
       }
     } else {
+      silentFrames = 0;
       silentSince = 0;
+      rearmed = false;
     }
     mic.style.transform = state === 'listen' ? `scale(${1 + level * 0.06})` : '';
     if (!active) mic.style.transform = '';
@@ -208,6 +218,59 @@
     if (phase === 'auth' && !challenge) needChallenge();
   }
 
+  // Give the microphone a second chance without dropping the call: stop the tracks,
+  // build the graph again, keep the socket and the session.
+  async function rearmAudio() {
+    try {
+      if (mediaStream) mediaStream.getTracks().forEach((track) => track.stop());
+      if (micNode) { try { micNode.disconnect(); } catch (e) {} }
+      if (micSource) { try { micSource.disconnect(); } catch (e) {} }
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        video: false,
+      });
+      micSource = ctx.createMediaStreamSource(mediaStream);
+      if (analyser) micSource.connect(analyser);
+      await ctx.audioWorklet.addModule('/static/capture-worklet.js');
+      micNode = new AudioWorkletNode(ctx, 'capture', { numberOfOutputs: 1 });
+      micNode.port.onmessage = (event) => {
+        // A suspended context keeps rendering silence: nudge it on every block until
+        // it is running, then never again.
+        if (ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} }
+        // Diagnostics: proves whether silence comes from the capture graph or the wire.
+        const block = event.data;
+        if (block && block.length) {
+          let m = 0;
+          for (let i = 0; i < block.length; i++) if (Math.abs(block[i]) > m) m = Math.abs(block[i]);
+          const track = (mediaStream && mediaStream.getAudioTracks()[0]) || null;
+          window.__voz = {
+            block: block.length, blockMax: m, sent: (window.__voz || {}).sent || 0,
+            ctx: ctx ? ctx.state : '-', rate: ctx ? ctx.sampleRate : 0, ratio: ratio,
+            track: track ? track.readyState + (track.muted ? '/muted' : '/unmuted') : 'none',
+            peak: (function () {
+              if (!analyser) return -1;
+              const d = new Uint8Array(analyser.fftSize);
+              analyser.getByteTimeDomainData(d);
+              let p = 0; for (let i = 0; i < d.length; i++) p = Math.max(p, Math.abs(d[i] - 128));
+              return p;
+            })(),
+          };
+        }
+        if (!ws || ws.readyState !== 1) return;
+        const pcm = toPCM16(block);
+        if (pcm && pcm.length) { ws.send(pcm.buffer); window.__voz.sent++; }
+      };
+      micSource.connect(micNode);
+      sink = ctx.createMediaStreamDestination();
+      micNode.connect(sink);
+      silentFrames = 0;
+      console.warn('audio: microphone re-armed without DSP');
+    } catch (error) {
+      console.error('rearm failed', error);
+      setState('idle', 'Micrófono sin señal · toca para reintentar');
+    }
+  }
+
   /* ------------------------------------------------------------------- session */
 
   async function start() {
@@ -229,15 +292,16 @@
       await ctx.resume();
       ratio = ctx.sampleRate / IN_RATE;
 
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        video: false,
-      });
+      // Plain constraints first: the DSP trio can make iOS hand back a muted track
+      // on some hardware/headset combinations, and silence is indistinguishable from
+      // a broken server. The fallback below re-acquires raw audio if this is silent.
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      if (!mediaStream.getAudioTracks().length) throw new Error('no audio track');
+      mediaStream.getAudioTracks()[0].enabled = true;
+      // The permission prompt interrupts the audio session: iOS leaves the context
+      // suspended, and a suspended context still runs the worklet — emitting zeros.
+      // This is the "socket open, rms=0.0000" failure, so resume again here.
+      if (ctx.state !== 'running') { try { await ctx.resume(); } catch (e) {} }
 
       micSource = ctx.createMediaStreamSource(mediaStream);
       analyser = ctx.createAnalyser();
@@ -248,15 +312,38 @@
       await ctx.audioWorklet.addModule('/static/capture-worklet.js');
       micNode = new AudioWorkletNode(ctx, 'capture', { numberOfOutputs: 1 });
       micNode.port.onmessage = (event) => {
+        // A suspended context keeps rendering silence: nudge it on every block until
+        // it is running, then never again.
+        if (ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} }
+        // Diagnostics: proves whether silence comes from the capture graph or the wire.
+        const block = event.data;
+        if (block && block.length) {
+          let m = 0;
+          for (let i = 0; i < block.length; i++) if (Math.abs(block[i]) > m) m = Math.abs(block[i]);
+          const track = (mediaStream && mediaStream.getAudioTracks()[0]) || null;
+          window.__voz = {
+            block: block.length, blockMax: m, sent: (window.__voz || {}).sent || 0,
+            ctx: ctx ? ctx.state : '-', rate: ctx ? ctx.sampleRate : 0, ratio: ratio,
+            track: track ? track.readyState + (track.muted ? '/muted' : '/unmuted') : 'none',
+            peak: (function () {
+              if (!analyser) return -1;
+              const d = new Uint8Array(analyser.fftSize);
+              analyser.getByteTimeDomainData(d);
+              let p = 0; for (let i = 0; i < d.length; i++) p = Math.max(p, Math.abs(d[i] - 128));
+              return p;
+            })(),
+          };
+        }
         if (!ws || ws.readyState !== 1) return;
-        const pcm = toPCM16(event.data);
-        if (pcm && pcm.length) ws.send(pcm.buffer);
+        const pcm = toPCM16(block);
+        if (pcm && pcm.length) { ws.send(pcm.buffer); window.__voz.sent++; }
       };
       micSource.connect(micNode);
-      // Keep the graph alive on iOS without feeding the mic back into the speaker.
-      const silent = ctx.createGain();
-      silent.gain.value = 0;
-      micNode.connect(silent).connect(ctx.destination);
+      // WebKit only pulls audio through a graph that ends somewhere: a silent sink
+      // makes the source produce samples without echoing them to the speaker.
+      sink = ctx.createMediaStreamDestination();
+      micNode.connect(sink);
+
     } catch (error) {
       console.error(error);
       setState('idle', 'Sin permiso de micrófono');
@@ -365,6 +452,7 @@
     if (micNode) { try { micNode.disconnect(); } catch (e) {} micNode = null; }
     if (micSource) { try { micSource.disconnect(); } catch (e) {} micSource = null; }
     if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
+    sink = null;
     flushAudio();
     if (ctx) { try { await ctx.close(); } catch (e) {} ctx = null; }
     if (wakeLock) { try { await wakeLock.release(); } catch (e) {} wakeLock = null; }

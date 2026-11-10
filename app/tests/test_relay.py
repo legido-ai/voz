@@ -146,3 +146,9 @@ def test_audio_context_is_created_before_any_await():
     assert not [l for l in start[:ctx_at].splitlines() if l.strip().startswith("await")]
     # And the challenge must not block the microphone: socket first, mint after.
     assert start.index("openSocket();") < start.index("needChallenge();")
+
+
+def test_context_is_resumed_again_after_the_permission_prompt():
+    js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
+    after_gum = js.split("getUserMedia({ audio: true", 1)[1].split("micSource =", 1)[0]
+    assert "ctx.resume()" in after_gum      # iOS suspends it behind the prompt
