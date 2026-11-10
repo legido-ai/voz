@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1 — 2026-11-09
+
+- Voz por defecto: Piper `es_ES-sharvard-medium` voz 1 (castellana, femenina),
+  elegible en el menú junto a Kokoro y las demás Piper.
+- Bloqueo de login por IP: 3 fallos consecutivos → 5 minutos, con la IP real
+  detrás de Traefik (`X-Forwarded-For`). Contador con ventana de 10 minutos.
+- Código de acceso rotado.
+
 ## 0.1.0 — 2026-11-09
 
 Primera versión: conversación por voz con OpenCode Go, todo autohospedado.

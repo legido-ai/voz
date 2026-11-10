@@ -93,9 +93,18 @@ Contenido del volumen `voz-models`:
 
 Un solo usuario: `VOZ_PASS_HASH` es el SHA-256 del código de acceso. Sin ese
 código configurado la app queda abierta (solo para desarrollo). La cookie de
-sesión va firmada con `VOZ_COOKIE_SECRET` y caduca a los 60 días. Hay un límite
-de 8 intentos fallidos por IP cada 10 minutos y un tope de 80 turnos por sesión.
-La clave del LLM vive solo en el entorno del contenedor: nunca llega al navegador.
+sesión va firmada con `VOZ_COOKIE_SECRET` y caduca a los 60 días. Tope de 80
+turnos por sesión. La clave del LLM vive solo en el entorno del contenedor:
+nunca llega al navegador.
+
+Bloqueo por IP: **3 códigos incorrectos consecutivos bloquean la IP 5 minutos**
+(`VOZ_BAN_AFTER`, `VOZ_BAN_SECONDS`); el contador caduca solo a los 10 minutos
+(`VOZ_FAIL_WINDOW`) y se limpia con un acierto. La IP es la real del cliente,
+tomada de `X-Forwarded-For`: Traefik, con `forwardedHeaders.insecure=false` y sin
+`trustedIPs`, descarta lo que mande el cliente y escribe él la del par, así que
+la última entrada de la cabecera es de fiar (verificado: llega la IP pública, no
+la del contenedor de Traefik). El bloqueo vive en memoria: reiniciar el
+contenedor lo borra.
 
 ## Ajustes de la app
 

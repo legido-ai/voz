@@ -43,7 +43,16 @@ DECODE_EVERY = 8                      # frames of 20 ms fed to the ASR before de
 app = FastAPI(title="voz", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
-_login_failures: dict[str, list[float]] = {}
+# Per-IP login protection: N consecutive wrong codes ban the IP for a while.
+# Behind Traefik the socket peer is the proxy, so the client is taken from
+# X-Forwarded-For, which Traefik sets itself (forwardedHeaders.insecure=false,
+# no trustedIPs => it discards whatever the client sent and writes the real peer).
+BAN_AFTER = int(os.environ.get("VOZ_BAN_AFTER", "3"))
+BAN_SECONDS = int(os.environ.get("VOZ_BAN_SECONDS", "300"))
+FAIL_WINDOW = int(os.environ.get("VOZ_FAIL_WINDOW", "600"))
+
+_failures: dict[str, tuple[int, float]] = {}   # ip -> (count, last failure)
+_bans: dict[str, float] = {}                   # ip -> banned until
 
 
 # ------------------------------------------------------------------------- auth
@@ -73,11 +82,46 @@ def _authed(request: Request) -> bool:
     return _valid(request.cookies.get(COOKIE))
 
 
-def _too_many(ip: str) -> bool:
+def client_ip(request: Request) -> str:
+    """The real peer: rightmost X-Forwarded-For entry, else the socket peer."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        candidate = forwarded.split(",")[-1].strip()
+        if candidate:
+            return candidate
+    return request.client.host if request.client else "?"
+
+
+def _banned(ip: str) -> int:
+    """Seconds left on this IP's ban, 0 when it is not banned."""
+    until = _bans.get(ip)
+    if not until:
+        return 0
+    left = int(until - time.time())
+    if left <= 0:
+        _bans.pop(ip, None)
+        return 0
+    return left
+
+
+def _note_failure(ip: str) -> int:
+    """Count a wrong code; return the ban length applied, 0 if not banned yet."""
     now = time.time()
-    hits = [t for t in _login_failures.get(ip, []) if now - t < 600]
-    _login_failures[ip] = hits
-    return len(hits) >= 8
+    count, last = _failures.get(ip, (0, now))
+    if now - last > FAIL_WINDOW:
+        count = 0
+    count += 1
+    _failures[ip] = (count, now)
+    if count >= BAN_AFTER:
+        _failures.pop(ip, None)
+        _bans[ip] = now + BAN_SECONDS
+        return BAN_SECONDS
+    return 0
+
+
+def _note_success(ip: str) -> None:
+    _failures.pop(ip, None)
+    _bans.pop(ip, None)
 
 
 LOGIN_PAGE = """<!doctype html><html lang="es"><head><meta charset="utf-8">
@@ -101,19 +145,30 @@ async def login_form(request: Request):
 
 @app.post("/login")
 async def login_submit(request: Request, code: str = Form("")):
-    ip = request.client.host if request.client else "?"
-    if _too_many(ip):
+    ip = client_ip(request)
+    left = _banned(ip)
+    if left:
         return HTMLResponse(
-            LOGIN_PAGE.format(error='<p class="error">Demasiados intentos. Espera un poco.</p>'),
-            status_code=429,
+            LOGIN_PAGE.format(
+                error=f'<p class="error">Demasiados intentos. Prueba en {left // 60 + 1} min.</p>'
+            ),
+            status_code=429, headers={"Retry-After": str(left)},
         )
     candidate = hashlib.sha256(code.strip().encode()).hexdigest()
     if PASS_HASH and hmac.compare_digest(candidate, PASS_HASH):
+        _note_success(ip)
         response = RedirectResponse("/", status_code=303)
         response.set_cookie(COOKIE, _token(), max_age=COOKIE_TTL, httponly=True,
                             secure=True, samesite="lax", path="/")
         return response
-    _login_failures.setdefault(ip, []).append(time.time())
+    banned_for = _note_failure(ip)
+    print(f"login: wrong code from {ip}"
+          + (f" - banned {banned_for}s" if banned_for else ""), flush=True)
+    if banned_for:
+        return HTMLResponse(
+            LOGIN_PAGE.format(error='<p class="error">Demasiados intentos. Bloqueado 5 minutos.</p>'),
+            status_code=429, headers={"Retry-After": str(banned_for)},
+        )
     return HTMLResponse(
         LOGIN_PAGE.format(error='<p class="error">Código incorrecto.</p>'), status_code=401
     )
