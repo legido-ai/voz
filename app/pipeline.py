@@ -58,14 +58,14 @@ class VAD:
         threshold: float = 0.011,
         barge_threshold: float = 0.028,
         start_ms: int = 140,
-        end_ms: int = 500,
+        end_ms: int = 900,          # VOZ_END_MS: a natural pause must not cut the user
         max_ms: int = 25000,
         preroll_ms: int = 200,
     ) -> None:
         self.threshold = threshold
         self.barge_threshold = barge_threshold
         self.start_frames = max(1, start_ms // FRAME_MS)
-        self.end_frames = max(1, end_ms // FRAME_MS)
+        self.end_frames = max(1, int(os.environ.get("VOZ_END_MS", end_ms)) // FRAME_MS)
         self.max_frames = max_ms // FRAME_MS
         self.preroll = max(1, preroll_ms // FRAME_MS)
         self.floor = 0.0035

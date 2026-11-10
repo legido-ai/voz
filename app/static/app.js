@@ -167,11 +167,10 @@
       phase = 'auth';
       setState('idle', 'Error en la autenticación.');
     }
-    // A used, expired or exhausted challenge is dead: ask for a new one, no reload.
+    // A used, expired or exhausted challenge is dead: ask for a new one, no reload,
+    // and keep the microphone open so the user can simply say it again.
     await newChallenge();
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'stop' }));
     setState('listen', 'Te escucho');
-    speak('Necesitas autenticarte.');
   }
 
   async function newChallenge() {
@@ -296,10 +295,11 @@
         caption(message.msg || '');
         break;
       case 'auth_expired':
+        // Keep the socket and the microphone: hanging up here is what made the app
+        // feel like it "stops listening" mid-sentence.
         phase = 'auth';
-        setState('idle', message.msg || 'Necesitas autenticarte.');
-        stop(true);
-        needChallenge();
+        setState('listen', 'Te escucho');
+        if (!challenge) needChallenge();
         break;
       case 'voice':
         break;

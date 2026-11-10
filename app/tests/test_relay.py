@@ -103,3 +103,22 @@ def test_websocket_accepts_before_authentication_but_turns_are_gated():
     # ...while every turn still re-checks the session.
     turn = source.split("async def start_turn", 1)[1].split("async def respond", 1)[0]
     assert "MFA.session_ok" in turn
+
+
+def test_vad_close_pause_is_long_enough_for_a_natural_break():
+    source = open(os.path.join(APP, "pipeline.py"), encoding="utf-8").read()
+    assert "end_ms: int = 900" in source or 'VOZ_END_MS' in source
+
+
+def test_auth_expired_keeps_the_microphone_open():
+    js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
+    block = js.split("case 'auth_expired':", 1)[1].split("case 'voice'", 1)[0]
+    assert "stop(" not in block
+    assert "setState('listen'" in block
+
+
+def test_unauthenticated_turn_still_reports_the_transcript():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    turn = source.split("async def start_turn", 1)[1].split("async def respond", 1)[0]
+    assert '"t": "heard"' in turn          # the client needs it to verify the code
+    assert "auth_expired" in turn

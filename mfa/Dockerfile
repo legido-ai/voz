@@ -8,7 +8,7 @@ WORKDIR /srv
 COPY requirements.txt /srv/requirements.txt
 RUN pip install --no-cache-dir -r /srv/requirements.txt
 
-COPY app.py store.py telegram.py /srv/
+COPY app.py store.py telegram.py words.py /srv/
 
 VOLUME /data
 EXPOSE 8000

@@ -28,6 +28,8 @@ SESSION_TTL = int(os.environ.get("VOZ_IDLE_MINUTES", "15")) * 60
 # digits that survived transcription, so digits are extracted, then windows taken.
 import re
 
+from words import words_to_digits
+
 _DIGITS = re.compile(r"\d")
 
 
@@ -150,14 +152,20 @@ class Store:
             if attempts >= self.attempts:
                 self.db.execute("UPDATE challenges SET used=1 WHERE id=?", (live_id,))
                 return Verdict(False, "attempts")
-            stream = digits(text)
+            # Two streams: literal digits and number words read aloud. A code dictated
+            # as "quinientos diez mil ochocientos veintinueve" must match too.
+            streams = [digits(text), words_to_digits(text)]
             matched = None
-            if len(stream) >= CODE_LEN:
+            for stream in streams:
+                if len(stream) < CODE_LEN:
+                    continue
                 for start in range(len(stream) - CODE_LEN + 1):
                     candidate = stream[start:start + CODE_LEN]
                     if hmac.compare_digest(_hash(nonce, candidate), code_hash):
                         matched = candidate
                         break
+                if matched:
+                    break
             if matched is None:
                 self.db.execute(
                     "UPDATE challenges SET attempts=attempts+1 WHERE id=?", (live_id,)

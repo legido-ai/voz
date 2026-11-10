@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -37,6 +38,7 @@ MIN_UTTERANCE = float(os.environ.get("VOZ_MIN_UTTERANCE", "0.35"))
 VOICE_IDS = {"es_f", "es_m", "es_m2", "es_piper_f", "es_piper_m",
              "es_carlfm", "es_davefx", "es_mls10246", "es_mls9972"}
 DECODE_EVERY = 8                      # frames of 20 ms fed to the ASR before decoding
+_DIGITS = re.compile(r"\d")
 
 # Spec A1: two lines, and nothing else. No hint about Telegram, the code, or what to do.
 MSG_AUTH = "Necesitas autenticarte."
@@ -296,6 +298,13 @@ class Session:
         # Every executed turn renews the idle clock; an expired session ends the call.
         if not await MFA.session_ok(self.session, touch=True):
             await self.interrupt(tell_client=True)
+            # The client verifies the code from the transcript, so an unauthenticated
+            # turn must still report what was heard — otherwise the code can never be
+            # checked and the session never starts. The streaming model writes numbers
+            # as words, so a one-shot pass over the same audio is the authority here.
+            text = await self._auth_transcript(text, audio)
+            if text:
+                await self.send_json({"t": "heard", "text": text})
             # The greeting already said the one allowed line; do not repeat it aloud.
             await self.send_json({"t": "auth_expired", "msg": MSG_AUTH})
             await self.state_to("listen")
@@ -310,6 +319,19 @@ class Session:
         gen = self.gen
         await self.state_to("think")
         self.task = asyncio.create_task(self.respond(text, audio, gen))
+
+    async def _auth_transcript(self, text: str, audio: np.ndarray) -> str:
+        """Best transcript for authentication: prefer the one that yields six digits."""
+        if len(_DIGITS.findall(text or "")) >= 6 or not P.STT_URL:
+            return text
+        try:
+            alt = await asyncio.wait_for(P.transcribe(audio), timeout=90)
+        except Exception as error:  # noqa: BLE001 - a slow STT must not hang a turn
+            print(f"auth stt failed: {error!r}", flush=True)
+            return text
+        if len(_DIGITS.findall(alt)) >= 6:
+            return alt
+        return f"{text} {alt}".strip()
 
     async def respond(self, text: str, audio: np.ndarray, gen: int) -> None:
         try:
