@@ -15,7 +15,6 @@
 </head>
 <body>
 <header>
-  <span class="brand">voz</span>
   <span class="header-right">
     <span id="net" class="dot" aria-hidden="true"></span>
     <button id="hangup" class="ghost" hidden aria-label="Colgar">Colgar</button>
@@ -49,13 +48,13 @@
   <div class="row">
     <label for="voice">Voz</label>
     <select id="voice">
-      <option value="es_piper_f">Castellana · femenina (rápida)</option>
-      <option value="es_f">Dora · natural, femenina</option>
-      <option value="es_m">Álex · natural, masculina</option>
-      <option value="es_m2">Santa · natural, masculina</option>
-      <option value="es_piper_m">Piper · masculina (rápida)</option>
-      <option value="es_carlfm">Carlos · peninsular, medio</option>
-      <option value="es_davefx">Voz de España · peninsular, medio</option>
+      <option value="es_piper_f">Castellana · femenina</option>
+      <option value="es_f">Dora · femenina</option>
+      <option value="es_m">Álex · masculina</option>
+      <option value="es_m2">Santa · masculina</option>
+      <option value="es_piper_m">Piper · masculina</option>
+      <option value="es_carlfm">Carlos · medio</option>
+      <option value="es_davefx">España · medio</option>
     </select>
   </div>
   <div class="row">
@@ -67,6 +66,7 @@
     <input id="captions" type="checkbox">
   </div>
   <button id="close" class="ghost wide">Cerrar</button>
+  <a id="logout" class="ghost wide danger" href="/logout">Cerrar sesión</a>
 </section>
 
 <script src="/static/app.js"></script>

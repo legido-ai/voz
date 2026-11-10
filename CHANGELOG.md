@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3 — 2026-11-09
+
+- Interfaz: círculo de grabación al máximo que cabe (337 px en un iPhone de
+  390 px, 460 px en pantallas grandes) y controles de cabecera más grandes
+  (54 px de alto). Eliminado el rótulo "voz".
+- El menú se cierra al tocar fuera; añadido "Cerrar sesión".
+- Corregido: `[hidden]` no funcionaba en los botones con `display` propio (el
+  botón "Colgar" se veía siempre).
+- Campo de usuario vacío en el login (por defecto `usuario` en el servidor).
+
 ## 0.1.2 — 2026-11-09
 
 - Login con las credenciales de AI Usage (misma contraseña, una sola fuente):

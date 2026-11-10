@@ -13,6 +13,9 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* A class with `display` in it must not resurrect a [hidden] element. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -30,25 +33,30 @@ header {
   padding: 14px 2px 0; font-size: 15px;
 }
 
-.brand { letter-spacing: .32em; text-transform: lowercase; color: var(--muted); font-size: 12px; }
-
-.header-right { display: flex; align-items: center; gap: 10px; }
+.header-right { display: flex; align-items: center; gap: 14px; margin-left: auto; }
 
 .ghost {
-  background: none; border: 1px solid #23262f; color: var(--muted);
-  border-radius: 999px; padding: 6px 14px; font-size: 13px; font-family: inherit;
+  background: none; border: 1px solid #2b303c; color: var(--ink);
+  border-radius: 999px; padding: 12px 26px; font-size: 20px; line-height: 1.1;
+  font-family: inherit; min-height: 54px; display: inline-flex; align-items: center;
+  justify-content: center; text-decoration: none;
 }
 .ghost:active { background: #16181f; }
 .ghost.wide { width: 100%; margin-top: 6px; }
 
-.dot { width: 7px; height: 7px; border-radius: 50%; background: #3a3f4b; transition: background .3s; }
+.dot { width: 12px; height: 12px; border-radius: 50%; background: #3a3f4b; transition: background .3s; }
 .dot.live { background: var(--ok); box-shadow: 0 0 10px rgba(74, 222, 128, .6); }
 .dot.busy { background: var(--accent); }
 .dot.down { background: var(--bad); }
 
 main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; }
 
-.stage { position: relative; width: 260px; height: 260px; display: grid; place-items: center; }
+.stage {
+  position: relative;
+  width: min(92vw, 56vh, 460px);
+  height: min(92vw, 56vh, 460px);
+  display: grid; place-items: center;
+}
 
 .halo {
   position: absolute; inset: 0; border-radius: 50%;
@@ -66,7 +74,7 @@ body.is-speak .halo { opacity: 1; transform: scale(1.02); background: radial-gra
 
 .mic {
   position: relative; z-index: 2;
-  width: 148px; height: 148px; border-radius: 50%;
+  width: 94%; height: 94%; border-radius: 50%;
   border: 1px solid #2a2e39;
   background: linear-gradient(180deg, #1a1d25 0%, #101218 100%);
   color: var(--ink); display: grid; place-items: center;
@@ -74,7 +82,7 @@ body.is-speak .halo { opacity: 1; transform: scale(1.02); background: radial-gra
   box-shadow: 0 18px 50px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .04);
 }
 .mic:active { transform: scale(.96); }
-.mic svg { width: 58px; height: 58px; fill: none; stroke: var(--ink); stroke-width: 1.7; stroke-linecap: round; }
+.mic svg { width: 39%; height: 39%; fill: none; stroke: var(--ink); stroke-width: 1.7; stroke-linecap: round; }
 .mic svg rect { fill: var(--ink); stroke: none; }
 .ico-bars { opacity: 0; transition: opacity .25s; }
 
@@ -96,7 +104,7 @@ body.is-think .ico-mic { opacity: .3; }
 body.is-think .ico-bars { opacity: 1; animation: fade 1.4s ease-in-out infinite; }
 @keyframes fade { 0%, 100% { opacity: .25; } 50% { opacity: .9; } }
 
-.status { margin: 26px 0 0; font-size: 17px; letter-spacing: .01em; color: var(--ink); }
+.status { margin: 26px 0 0; font-size: 21px; letter-spacing: .01em; color: var(--ink); }
 .caption { margin: 10px 0 0; font-size: 14px; color: var(--muted); text-align: center; max-width: 320px; min-height: 20px; line-height: 1.4; }
 .hint { position: absolute; bottom: calc(24px + var(--safe-bottom)); margin: 0; font-size: 12.5px; color: #5b616e; text-align: center; max-width: 300px; transition: opacity .5s; }
 body.is-listen .hint, body.is-speak .hint, body.is-think .hint { opacity: 0; }
@@ -109,7 +117,8 @@ body.is-listen .hint, body.is-speak .hint, body.is-think .hint { opacity: 0; }
 }
 .panel .row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 0; }
 .panel label { color: var(--muted); font-size: 14px; }
-.panel select, .panel input[type="range"] { flex: 1; max-width: 190px; }
+.panel select, .panel input[type="range"] { flex: 1; max-width: 200px; }
+.panel .danger { color: #f0a0a0; border-color: #3a2a2e; }
 .panel select {
   background: #0d0f14; color: var(--ink); border: 1px solid #23262f;
   border-radius: 10px; padding: 8px 10px; font-size: 14px; font-family: inherit;
