@@ -174,6 +174,17 @@ async def index(request: Request):
     for asset in ("app.js", "styles.css"):
         stamp = int((STATIC / asset).stat().st_mtime)
         page = page.replace(f"/static/{asset}", f"/static/{asset}?v={stamp}")
+    user_agent = request.headers.get("user-agent", "")
+    # Telegram's in-app browser is a WKWebView: microphone capture there is not the
+    # same as Safari's, and the failure looks exactly like a broken app.
+    if "Telegram" in user_agent:
+        page = page.replace(
+            "<body>",
+            "<body><div style=\"position:fixed;inset:0 0 auto 0;z-index:9;padding:10px 14px;"
+            "background:#7a1f1f;color:#fff;font:14px/1.35 -apple-system,system-ui,sans-serif;"
+            "text-align:center\">Estás en el navegador de Telegram. Ábrelo en Safari: "
+            "··· → Abrir en Safari.</div>",
+        )
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 

@@ -99,6 +99,19 @@
 
   let silentSince = 0;
 
+  // One place that turns captured float samples into wire frames, shared by every
+  // capture path, with the diagnostic state the logs and the UI read.
+  function sendBlock(block) {
+    if (!block || !block.length) return;
+    if (ctx && ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} }
+    let m = 0;
+    for (let i = 0; i < block.length; i++) if (Math.abs(block[i]) > m) m = Math.abs(block[i]);
+    window.__voz = { block: block.length, blockMax: m, sent: (window.__voz || {}).sent || 0 };
+    if (!ws || ws.readyState !== 1) return;
+    const pcm = toPCM16(block);
+    if (pcm && pcm.length) { ws.send(pcm.buffer); window.__voz.sent++; }
+  }
+
   function analyse() {
     if (!analyser) return;
     const data = new Uint8Array(analyser.fftSize);
@@ -231,38 +244,15 @@
       });
       micSource = ctx.createMediaStreamSource(mediaStream);
       if (analyser) micSource.connect(analyser);
-      await ctx.audioWorklet.addModule('/static/capture-worklet.js');
-      micNode = new AudioWorkletNode(ctx, 'capture', { numberOfOutputs: 1 });
-      micNode.port.onmessage = (event) => {
-        // A suspended context keeps rendering silence: nudge it on every block until
-        // it is running, then never again.
-        if (ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} }
-        // Diagnostics: proves whether silence comes from the capture graph or the wire.
-        const block = event.data;
-        if (block && block.length) {
-          let m = 0;
-          for (let i = 0; i < block.length; i++) if (Math.abs(block[i]) > m) m = Math.abs(block[i]);
-          const track = (mediaStream && mediaStream.getAudioTracks()[0]) || null;
-          window.__voz = {
-            block: block.length, blockMax: m, sent: (window.__voz || {}).sent || 0,
-            ctx: ctx ? ctx.state : '-', rate: ctx ? ctx.sampleRate : 0, ratio: ratio,
-            track: track ? track.readyState + (track.muted ? '/muted' : '/unmuted') : 'none',
-            peak: (function () {
-              if (!analyser) return -1;
-              const d = new Uint8Array(analyser.fftSize);
-              analyser.getByteTimeDomainData(d);
-              let p = 0; for (let i = 0; i < d.length; i++) p = Math.max(p, Math.abs(d[i] - 128));
-              return p;
-            })(),
-          };
-        }
-        if (!ws || ws.readyState !== 1) return;
-        const pcm = toPCM16(block);
-        if (pcm && pcm.length) { ws.send(pcm.buffer); window.__voz.sent++; }
-      };
+      // WebKit feeds a MediaStreamSource into ScriptProcessor but hands zeros to an
+      // AudioWorkletNode on the same graph (analyser shows signal, worklet does not).
+      // Deprecated, and the only capture path that works on every iPhone here.
+      micNode = ctx.createScriptProcessor(2048, 1, 1);
+      micNode.onaudioprocess = (event) => sendBlock(event.inputBuffer.getChannelData(0));
       micSource.connect(micNode);
-      sink = ctx.createMediaStreamDestination();
-      micNode.connect(sink);
+      // Keep the graph pulling without echoing the mic to the speaker.
+      const mute = ctx.createGain(); mute.gain.value = 0;
+      micNode.connect(mute).connect(ctx.destination);
       silentFrames = 0;
       console.warn('audio: microphone re-armed without DSP');
     } catch (error) {
@@ -309,40 +299,16 @@
       micSource.connect(analyser);
       levelTimer = window.setInterval(analyse, 70);
 
-      await ctx.audioWorklet.addModule('/static/capture-worklet.js');
-      micNode = new AudioWorkletNode(ctx, 'capture', { numberOfOutputs: 1 });
-      micNode.port.onmessage = (event) => {
-        // A suspended context keeps rendering silence: nudge it on every block until
-        // it is running, then never again.
-        if (ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} }
-        // Diagnostics: proves whether silence comes from the capture graph or the wire.
-        const block = event.data;
-        if (block && block.length) {
-          let m = 0;
-          for (let i = 0; i < block.length; i++) if (Math.abs(block[i]) > m) m = Math.abs(block[i]);
-          const track = (mediaStream && mediaStream.getAudioTracks()[0]) || null;
-          window.__voz = {
-            block: block.length, blockMax: m, sent: (window.__voz || {}).sent || 0,
-            ctx: ctx ? ctx.state : '-', rate: ctx ? ctx.sampleRate : 0, ratio: ratio,
-            track: track ? track.readyState + (track.muted ? '/muted' : '/unmuted') : 'none',
-            peak: (function () {
-              if (!analyser) return -1;
-              const d = new Uint8Array(analyser.fftSize);
-              analyser.getByteTimeDomainData(d);
-              let p = 0; for (let i = 0; i < d.length; i++) p = Math.max(p, Math.abs(d[i] - 128));
-              return p;
-            })(),
-          };
-        }
-        if (!ws || ws.readyState !== 1) return;
-        const pcm = toPCM16(block);
-        if (pcm && pcm.length) { ws.send(pcm.buffer); window.__voz.sent++; }
-      };
+      // WebKit feeds a MediaStreamSource into ScriptProcessor but hands zeros to an
+      // AudioWorkletNode on the same graph: the analyser shows signal while the worklet
+      // block is all zeros, which reached production as rms=0.0000. Deprecated API, and
+      // the only capture path that works on every iPhone here.
+      micNode = ctx.createScriptProcessor(2048, 1, 1);
+      micNode.onaudioprocess = (event) => sendBlock(event.inputBuffer.getChannelData(0));
       micSource.connect(micNode);
-      // WebKit only pulls audio through a graph that ends somewhere: a silent sink
-      // makes the source produce samples without echoing them to the speaker.
-      sink = ctx.createMediaStreamDestination();
-      micNode.connect(sink);
+      // Keep the graph pulling without echoing the microphone to the speaker.
+      const mute = ctx.createGain(); mute.gain.value = 0;
+      micNode.connect(mute).connect(ctx.destination);
 
     } catch (error) {
       console.error(error);

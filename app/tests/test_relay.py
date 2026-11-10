@@ -152,3 +152,11 @@ def test_context_is_resumed_again_after_the_permission_prompt():
     js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
     after_gum = js.split("getUserMedia({ audio: true", 1)[1].split("micSource =", 1)[0]
     assert "ctx.resume()" in after_gum      # iOS suspends it behind the prompt
+
+
+def test_capture_uses_script_processor_not_the_worklet():
+    js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
+    # WebKit hands zeros to the worklet while the analyser sees signal.
+    assert "createScriptProcessor" in js
+    assert "audioWorklet" not in js
+    assert "function sendBlock" in js
