@@ -30,6 +30,13 @@
   tiene formulario donde aplicarse.
 - La credencial `OPENCODE_GO_API_KEY` en el contenedor `voz`.
 
+### Fixed
+- El relay apuntaba a `host.docker.internal`, que resuelve al gateway de Docker y no
+  al contenedor de Hermes; ahora usa `http://hermes:8642/p/voz/v1` y el contenedor se
+  conecta a `box_default`, porque Docker aísla las redes bridge entre sí.
+- El perfil `voz` heredó la regla de cierre «✅ I'm done», que se leía en voz alta: se
+  retiró de su memoria y `speakable()` descarta ese marcador si vuelve a aparecer.
+
 ### Security
 - El número de aprobación es de un uso, caduca y tiene intentos limitados; una
   reutilización responde `used`, un código viejo `expired`.

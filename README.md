@@ -72,7 +72,7 @@ docker volume create voz-mfa-data    # una vez
 
 docker run -d --name voz-mfa --restart unless-stopped --network voz-net \
   -v voz-mfa-data:/data \
-  -e MFA_BOT_TOKEN -e MFA_CHAT_ID -e MFA_OUTBOX=1 \
+  -e MFA_BOT_TOKEN -e MFA_CHAT_ID=21442158 -e MFA_OUTBOX=1 \
   ghcr.io/legido-ai/voz-mfa:current
 
 docker run -d --name voz --restart unless-stopped \
@@ -80,7 +80,8 @@ docker run -d --name voz --restart unless-stopped \
   -v voz-models:/models:ro --add-host host.docker.internal:host-gateway \
   -e MFA_URL=http://voz-mfa:8000 \
   -e TTS_URL=http://voz-tts:9000 \
-  -e HERMES_BASE=http://host.docker.internal:8642/p/voz/v1 -e HERMES_MODEL=voz \
+  --network box_default \
+  -e HERMES_BASE=http://hermes:8642/p/voz/v1 -e HERMES_MODEL=voz \
   -e HERMES_API_KEY \
   -l traefik.enable=true \
   -l 'traefik.http.routers.voz.rule=Host(`voz.oci2.legido.com`)' \
@@ -126,11 +127,20 @@ crea y el outbox registra `sent=0` (modo prueba, falla cerrado).
 ### Relay al perfil Hermes `voz`
 
 `voz` no guarda ninguna clave de modelo. Habla con el API server del gateway de
-Hermes en `HERMES_BASE` (por defecto
-`http://host.docker.internal:8642/p/voz/v1`, modelo `voz`), con
+Hermes en `HERMES_BASE` (`http://hermes:8642/p/voz/v1`, modelo `voz`), con
 `HERMES_API_KEY` = `API_SERVER_KEY` del perfil. Sin esa clave el contenedor **no
 arranca**: un relay sin credencial fallaría dentro de un turno de voz, que es
 mucho más difícil de diagnosticar.
+
+Dos condiciones de red, ambas verificadas a mano:
+
+1. El API server escucha en `127.0.0.1` por defecto, así que hay que fijar
+   `platforms.api_server.host=0.0.0.0` y reiniciar el gateway (el bind ocurre al
+   arrancar). `host.docker.internal` **no** sirve aquí: resuelve al gateway de
+   Docker, no al contenedor de Hermes.
+2. Docker aísla las redes bridge entre sí: `voz` no alcanza `box_default` desde
+   `voz-net`. El contenedor se conecta también a `box_default` y llama por el
+   nombre `hermes`.
 
 ## Ajustes de la app
 

@@ -135,7 +135,12 @@ _EMOJI = re.compile(
 _SENT_END = re.compile(r"[.!?…]+(?=\s|$)")
 
 
+_ARTIFACT = re.compile(r"\bi'?m done\b[.!\s]*$", re.IGNORECASE)
+
+
 def speakable(text: str) -> str:
+    # A chat-oriented agent may append sign-off markers; they must never be voiced.
+    text = _ARTIFACT.sub("", text or "")
     text = _EMOJI.sub(" ", text or "")
     text = _MD.sub(" ", text)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)

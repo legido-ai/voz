@@ -65,3 +65,8 @@ def test_a_wrong_code_reports_the_exact_failure_line():
     body = source.split("async def auth_verify", 1)[1].split("@app.get", 1)[0]
     assert '"message": MSG_FAIL' in body
     assert 'MSG_FAIL = "Error en la autenticación."' in source
+
+
+def test_sign_off_marker_is_never_spoken():
+    assert pipeline.speakable("Cadena de voz operativa. ✅ I'm done") == "Cadena de voz operativa."
+    assert pipeline.speakable("Listo, he terminado.") == "Listo, he terminado."

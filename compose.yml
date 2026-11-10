@@ -55,13 +55,13 @@ services:
       STT_URL: ""                      # sherpa streaming in process
       TTS_URL: http://voz-tts:9000
       MFA_URL: http://voz-mfa:8000
-      HERMES_BASE: http://host.docker.internal:8642/p/voz/v1
+      HERMES_BASE: http://hermes:8642/p/voz/v1
       HERMES_MODEL: voz
       HERMES_API_KEY: ${HERMES_API_KEY}
       VOZ_IDLE_MINUTES: "15"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks: [voz, edge]
+    # box_default: the Hermes API listener is bound to the box interface, and Docker
+    # isolates bridge networks from each other, so the relay needs a shared network.
+    networks: [voz, edge, hermes]
     labels:
       traefik.enable: "true"
       traefik.http.routers.voz.rule: "Host(`voz.oci2.legido.com`)"
@@ -73,6 +73,9 @@ networks:
   voz:
     name: voz-net
   edge:
+    external: true
+  hermes:
+    name: box_default
     external: true
 
 volumes:
