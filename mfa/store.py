@@ -79,7 +79,13 @@ class Store:
             token TEXT PRIMARY KEY, created REAL NOT NULL, touched REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS outbox (
             id INTEGER PRIMARY KEY AUTOINCREMENT, challenge TEXT NOT NULL,
-            code TEXT NOT NULL, sent INTEGER NOT NULL, at REAL NOT NULL)""")
+            code TEXT NOT NULL, sent INTEGER NOT NULL, at REAL NOT NULL,
+            caller TEXT, message_id INTEGER)""")
+        # Older volumes predate the audit columns: add them in place.
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(outbox)")}
+        for name, kind in (("caller", "TEXT"), ("message_id", "INTEGER")):
+            if name not in columns:
+                self.db.execute(f"ALTER TABLE outbox ADD COLUMN {name} {kind}")
 
     # -- challenges -------------------------------------------------------
 
@@ -96,13 +102,15 @@ class Store:
             self.db.execute("DELETE FROM challenges WHERE created < ?", (now - 86400,))
         return Created(id=ident, code=code, expires_in=self.ttl)
 
-    def record(self, ident: str, code: str, sent: bool) -> None:
-        """Diagnostic trail: the code lives here only for the outbox/tests."""
+    def record(self, ident: str, code: str, sent: bool, *, caller: str = "",
+               message_id: int | None = None) -> None:
+        """Diagnostic trail: who asked, and which Telegram message carried the code."""
         if os.environ.get("MFA_OUTBOX", "").strip() in ("1", "true"):
             with self._lock:
                 self.db.execute(
-                    "INSERT INTO outbox (challenge, code, sent, at) VALUES (?,?,?,?)",
-                    (ident, code, 1 if sent else 0, time.time()),
+                    "INSERT INTO outbox (challenge, code, sent, at, caller, message_id) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (ident, code, 1 if sent else 0, time.time(), caller, message_id),
                 )
 
     def live(self, ident: str) -> bool:

@@ -23,6 +23,7 @@ def mfa(monkeypatch):
     os.environ["MFA_DB"] = ":memory:"
     os.environ["MFA_SEND_COOLDOWN"] = "20"
     os.environ["MFA_SEND_HOURLY"] = "3"
+    os.environ["MFA_OUTBOX"] = "1"
     app_module = load("app")
     app_module.STORE = load("store").Store(":memory:", ttl=300, attempts=5, session_ttl=900)
     app_module._sent_at.clear()
@@ -30,7 +31,7 @@ def mfa(monkeypatch):
 
     async def fake_send(code, chat_id=None):
         sent.append(code)
-        return True
+        return {"ok": True, "message_id": len(sent)}
 
     app_module.TG.send_code = fake_send
     app_module.sent = sent
@@ -68,3 +69,18 @@ def test_a_suppressed_push_still_mints_a_challenge(mfa):
     exists even when the push was withheld."""
     created = mfa.STORE.create()
     assert created.code.isdigit() and len(created.code) == 6
+
+
+def test_private_and_loopback_callers_never_reach_telegram(mfa):
+    for addr in ("127.0.0.1", "172.17.0.1", "10.210.0.3", "::1", "192.168.1.5"):
+        assert not mfa._is_public(addr), addr
+    for addr in ("82.70.92.83", "8.8.8.8", "2a00:1450:4001::1"):
+        assert mfa._is_public(addr), addr
+
+
+def test_outbox_records_caller_and_message_id(mfa):
+    created = mfa.STORE.create()
+    mfa.STORE.record(created.id, created.code, True, caller="82.70.92.83", message_id=42)
+    row = mfa.STORE.db.execute(
+        "select caller, message_id, sent from outbox order by id desc limit 1").fetchone()
+    assert row == ("82.70.92.83", 42, 1)

@@ -31,6 +31,21 @@ SEND_HOURLY = int(os.environ.get("MFA_SEND_HOURLY", "6"))          # per rolling
 _sent_at: list[float] = []
 
 
+def _is_public(addr: str) -> bool:
+    """A real visitor arrives through Traefik with a public address.
+
+    Loopback and private ranges mean the caller is a test or another container on the
+    box: those must never ring the user's phone.
+    """
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(addr.strip())
+    except ValueError:
+        return False
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified)
+
+
 def _may_send() -> tuple[bool, int]:
     now = time.time()
     _sent_at[:] = [t for t in _sent_at if now - t < 3600]
@@ -58,19 +73,23 @@ async def healthz():
 
 @app.get("/api/auth/challenge")
 async def challenge(request: Request):
-    caller = request.headers.get("x-client-ip", "?")
+    caller = request.headers.get("x-client-ip", "?").strip() or "?"
     created = STORE.create()
     allowed, wait = _may_send()
-    sent = False
-    if allowed:
-        sent = await TG.send_code(created.code)
+    sent, message_id = False, None
+    if not _is_public(caller):
+        print(f"mfa: push suppressed (non-public caller {caller})", flush=True)
+        wait = 0
+    elif allowed:
+        result = await TG.send_code(created.code)
+        sent, message_id = bool(result.get("ok")), result.get("message_id")
         if sent:
             _sent_at.append(time.time())
     else:
         print(f"mfa: push suppressed (cooldown {wait}s) caller={caller}", flush=True)
-    STORE.record(created.id, created.code, sent)
-    print(f"mfa: challenge {created.id[:8]} sent={1 if sent else 0} caller={caller}",
-          flush=True)
+    STORE.record(created.id, created.code, sent, caller=caller, message_id=message_id)
+    print(f"mfa: challenge {created.id[:8]} sent={1 if sent else 0} caller={caller} "
+          f"msg={message_id}", flush=True)
     # The number itself never crosses this boundary.
     return {"id": created.id, "expires_in": created.expires_in,
             "code_length": S.CODE_LEN, "sent": sent, "retry_after": wait}

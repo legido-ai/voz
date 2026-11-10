@@ -20,12 +20,12 @@ def _text(code: str) -> str:
     return f"{code[:3]} {code[3:]}"
 
 
-async def send_code(code: str, *, chat_id: str | None = None) -> bool:
-    """True when Telegram accepted the message. Never raises."""
+async def send_code(code: str, *, chat_id: str | None = None) -> dict:
+    """Deliver the code; returns {"ok": bool, "message_id": int | None}. Never raises."""
     target = (chat_id or CHAT_ID).strip()
     if not TOKEN or not target:
         print("mfa: telegram not configured (MFA_BOT_TOKEN/MFA_CHAT_ID)", file=sys.stderr, flush=True)
-        return False
+        return {"ok": False, "message_id": None}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
@@ -39,10 +39,11 @@ async def send_code(code: str, *, chat_id: str | None = None) -> bool:
             )
     except Exception as error:  # noqa: BLE001 - delivery must not crash a request
         print(f"mfa: telegram send failed: {error!r}", file=sys.stderr, flush=True)
-        return False
+        return {"ok": False, "message_id": None}
     if response.status_code != 200:
         # Never print the token or the URL: status plus a truncated body only.
         print(f"mfa: telegram {response.status_code}: {response.text[:120]}",
               file=sys.stderr, flush=True)
-        return False
-    return True
+        return {"ok": False, "message_id": None}
+    body = response.json()
+    return {"ok": True, "message_id": (body.get("result") or {}).get("message_id")}
