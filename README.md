@@ -91,13 +91,22 @@ Contenido del volumen `voz-models`:
 
 ## Acceso
 
-Un solo usuario: `VOZ_PASS_HASH` es el SHA-256 del código de acceso. Sin ese
-código configurado la app queda abierta (solo para desarrollo). La cookie de
-sesión va firmada con `VOZ_COOKIE_SECRET` y caduca a los 60 días. Tope de 80
-turnos por sesión. La clave del LLM vive solo en el entorno del contenedor:
-nunca llega al navegador.
+Las credenciales son las de **AI Usage**: se valida usuario y contraseña contra
+`accounts.db` (`scrypt$n$r$p$salt$hash`) montado en solo lectura desde el volumen
+`opencode-go-usage-auth` (`VOZ_AUTH_DB=/auth/accounts.db`, usuario por defecto
+`usuario`). Rotar la contraseña en la app de AI Usage la rota aquí también.
 
-Bloqueo por IP: **3 códigos incorrectos consecutivos bloquean la IP 5 minutos**
+Detalle: esa base está en modo WAL y en un montaje de solo lectura SQLite no
+puede abrirla (necesita crear `-shm`/`-wal`), así que el servicio copia el
+`.db` (y su WAL) a un directorio temporal propio y consulta la copia,
+refrescándola cuando cambia el original.
+
+Sin base de datos montada cae a `VOZ_PASS_HASH` (SHA-256 de un código suelto),
+que solo sirve como recuperación. La cookie de sesión va firmada con
+`VOZ_COOKIE_SECRET` y caduca a los 60 días. Tope de 80 turnos por sesión. La
+clave del LLM vive solo en el entorno del contenedor: nunca llega al navegador.
+
+Bloqueo por IP: **3 intentos incorrectos consecutivos bloquean la IP 5 minutos**
 (`VOZ_BAN_AFTER`, `VOZ_BAN_SECONDS`); el contador caduca solo a los 10 minutos
 (`VOZ_FAIL_WINDOW`) y se limpia con un acierto. La IP es la real del cliente,
 tomada de `X-Forwarded-For`: Traefik, con `forwardedHeaders.insecure=false` y sin

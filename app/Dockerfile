@@ -9,7 +9,7 @@ WORKDIR /srv
 COPY requirements.txt /srv/requirements.txt
 RUN pip install --no-cache-dir -r /srv/requirements.txt
 
-COPY main.py pipeline.py asr.py /srv/
+COPY main.py pipeline.py asr.py authdb.py /srv/
 COPY static /srv/static
 
 EXPOSE 9000

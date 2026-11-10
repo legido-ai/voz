@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 — 2026-11-09
+
+- Login con las credenciales de AI Usage (misma contraseña, una sola fuente):
+  `accounts.db` leído en solo lectura y copiado a temporal por el modo WAL.
+- Formulario con usuario (por defecto `usuario`) y contraseña; el código suelto
+  queda solo como recuperación.
+
 ## 0.1.1 — 2026-11-09
 
 - Voz por defecto: Piper `es_ES-sharvard-medium` voz 1 (castellana, femenina),

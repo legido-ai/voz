@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 import asr as A
+import authdb
 import pipeline as P
 
 HERE = Path(__file__).parent
@@ -130,47 +131,66 @@ LOGIN_PAGE = """<!doctype html><html lang="es"><head><meta charset="utf-8">
 <body class="login-body"><main class="login">
 <h1>Voz</h1><p class="muted">Habla con tu asistente.</p>
 <form method="post" action="/login">
-<input type="password" name="code" inputmode="text" autocomplete="current-password"
- placeholder="Código de acceso" autofocus>
+<input type="text" name="user" value="{user}" autocapitalize="none" autocorrect="off"
+ spellcheck="false" autocomplete="username" placeholder="Usuario"{user_disabled}>
+<input type="password" name="password" inputmode="text" autocomplete="current-password"
+ placeholder="Contraseña"{focus}>
 <button type="submit">Entrar</button></form>
 {error}</main></body></html>"""
+
+
+def _login_page(error: str = "") -> str:
+    shared = authdb.available()
+    return LOGIN_PAGE.format(
+        error=error,
+        user=authdb.DEFAULT_USER if shared else "",
+        user_disabled="" if shared else ' style="display:none"',
+        focus="" if shared else " autofocus",
+    )
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_form(request: Request):
     if _authed(request):
         return RedirectResponse("/", status_code=303)
-    return HTMLResponse(LOGIN_PAGE.format(error=""))
+    return HTMLResponse(_login_page())
 
 
 @app.post("/login")
-async def login_submit(request: Request, code: str = Form("")):
+async def login_submit(request: Request, password: str = Form(""),
+                       user: str = Form(""), code: str = Form("")):
     ip = client_ip(request)
     left = _banned(ip)
     if left:
         return HTMLResponse(
-            LOGIN_PAGE.format(
-                error=f'<p class="error">Demasiados intentos. Prueba en {left // 60 + 1} min.</p>'
+            _login_page(
+                f'<p class="error">Demasiados intentos. Prueba en {left // 60 + 1} min.</p>'
             ),
             status_code=429, headers={"Retry-After": str(left)},
         )
-    candidate = hashlib.sha256(code.strip().encode()).hexdigest()
-    if PASS_HASH and hmac.compare_digest(candidate, PASS_HASH):
+    secret = password or code
+    if authdb.available():
+        ok = authdb.verify(user or authdb.DEFAULT_USER, secret)
+    else:
+        ok = bool(PASS_HASH) and hmac.compare_digest(
+            hashlib.sha256(secret.strip().encode()).hexdigest(), PASS_HASH
+        )
+    if ok:
         _note_success(ip)
         response = RedirectResponse("/", status_code=303)
         response.set_cookie(COOKIE, _token(), max_age=COOKIE_TTL, httponly=True,
                             secure=True, samesite="lax", path="/")
         return response
     banned_for = _note_failure(ip)
-    print(f"login: wrong code from {ip}"
+    print(f"login: wrong credentials from {ip} (user={user or '-'})"
           + (f" - banned {banned_for}s" if banned_for else ""), flush=True)
     if banned_for:
         return HTMLResponse(
-            LOGIN_PAGE.format(error='<p class="error">Demasiados intentos. Bloqueado 5 minutos.</p>'),
+            _login_page('<p class="error">Demasiados intentos. Bloqueado 5 minutos.</p>'),
             status_code=429, headers={"Retry-After": str(banned_for)},
         )
     return HTMLResponse(
-        LOGIN_PAGE.format(error='<p class="error">Código incorrecto.</p>'), status_code=401
+        _login_page('<p class="error">Usuario o contraseña incorrectos.</p>'), status_code=401
     )
 
 
@@ -199,6 +219,7 @@ async def healthz():
     model = A.instance()
     return JSONResponse({
         "ok": bool(tts and P.LLM_KEY and model),
+        "auth": "ai-usage accounts" if authdb.available() else "local code",
         "asr": "sherpa-streaming" if model else "unavailable",
         "tts": tts,
         "whisper_fallback": stt,
@@ -404,6 +425,17 @@ class Session:
                 await self.state_to("speak")
                 announced = True
             await self.send_bytes(chunk)
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    if authdb.available():
+        print(f"auth: {authdb.count()} accounts from {authdb.AUTH_DB} "
+              f"(default user {authdb.DEFAULT_USER})", flush=True)
+    elif PASS_HASH:
+        print("auth: local access code", flush=True)
+    else:
+        print("auth: DISABLED - no code and no accounts database", flush=True)
 
 
 @app.websocket("/ws")
