@@ -143,7 +143,7 @@ def _login_page(error: str = "") -> str:
     shared = authdb.available()
     return LOGIN_PAGE.format(
         error=error,
-        user=authdb.DEFAULT_USER if shared else "",
+        user="",
         user_disabled="" if shared else ' style="display:none"',
         focus="" if shared else " autofocus",
     )

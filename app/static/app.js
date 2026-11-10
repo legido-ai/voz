@@ -248,8 +248,22 @@
 
   hangup.addEventListener('click', (event) => { event.stopPropagation(); stop(false); });
 
-  $('settings').addEventListener('click', () => { panel.hidden = !panel.hidden; });
+  const settingsBtn = $('settings');
+  settingsBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    panel.hidden = !panel.hidden;
+  });
   $('close').addEventListener('click', () => { panel.hidden = true; });
+
+  // Tapping anywhere outside the panel collapses it.
+  document.addEventListener('click', (event) => {
+    if (panel.hidden) return;
+    if (panel.contains(event.target) || settingsBtn.contains(event.target)) return;
+    panel.hidden = true;
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') panel.hidden = true;
+  });
 
   voiceEl.addEventListener('change', () => {
     localStorage.setItem(LS.voice, voiceEl.value);
