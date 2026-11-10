@@ -109,6 +109,16 @@
   // assistant itself (turn handshake), so it uses the same voice as every answer.
   async function speak(text) { if (text) caption(text); }
 
+  // Remove the spoken code (including spaces between digits) from the transcript.
+  function stripCode(text) {
+    return (text || '')
+      .replace(/\b\d(?:\s*\d){5}\b/g, ' ')
+      .replace(/\s*(c[oó]digo|clave)\s*/gi, ' ')
+      .replace(/[\s,;.]{2,}/g, ' ')
+      .replace(/^[\s,;.]+|[\s,;.]+$/g, '')
+      .trim();
+  }
+
   async function checkSession() {
     const response = await fetch('/api/session', { cache: 'no-store' });
     phase = response.ok ? 'open' : 'auth';
@@ -142,7 +152,14 @@
         body: JSON.stringify({ token, challenge: challenge && challenge.id }),
       });
       const body = await response.json();
-      if (body.ok) { phase = 'open'; return; }
+      if (body.ok) {
+        phase = 'open';
+        // The code rode along with the request: run the request now, once, without the
+        // digits (the user must not have to dictate the same sentence twice).
+        const request = stripCode(token);
+        if (request && ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'text', v: request }));
+        return;
+      }
       phase = 'auth';
       setState('idle', body.message || 'Error en la autenticación.');
       speak(body.message || 'Error en la autenticación.');
@@ -229,7 +246,7 @@
     ws.onclose = (event) => {
       netState('down');
       if (active) {
-        if (event.code === 4401) { location.href = '/login'; return; }
+        if (event.code === 4401) { phase = 'auth'; }   // no login page any more
         setState('idle', 'Desconectado · toca para reintentar');
         stop(true);
       }

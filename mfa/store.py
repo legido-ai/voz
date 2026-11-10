@@ -105,6 +105,16 @@ class Store:
                     (ident, code, 1 if sent else 0, time.time()),
                 )
 
+    def live(self, ident: str) -> bool:
+        with self._lock:
+            row = self.db.execute(
+                "SELECT created, used FROM challenges WHERE id=?", (ident,)
+            ).fetchone()
+        if row is None:
+            return False
+        created, used = row
+        return not used and (time.time() - created) <= self.ttl
+
     def verify(self, ident: Optional[str], text: str) -> Verdict:
         """Check a spoken transcript against the live challenge."""
         with self._lock:

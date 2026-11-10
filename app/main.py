@@ -96,7 +96,7 @@ async def auth_challenge(request: Request):
     key = _client_key(request)
     now = time.time()
     live = _challenges.get(key)
-    if live and now - live[1] < CHALLENGE_REUSE:
+    if live and now - live[1] < CHALLENGE_REUSE and await MFA.is_live(live[0]):
         print(f"challenge: reused for {key}", flush=True)
         return {"needs_auth": True, "message": MSG_AUTH, "reused": True,
                 "challenge": {"id": live[0], "expires_in": 0, "code_length": 6,
@@ -296,7 +296,7 @@ class Session:
         # Every executed turn renews the idle clock; an expired session ends the call.
         if not await MFA.session_ok(self.session, touch=True):
             await self.interrupt(tell_client=True)
-            await self.say(MSG_AUTH, self.gen, True)
+            # The greeting already said the one allowed line; do not repeat it aloud.
             await self.send_json({"t": "auth_expired", "msg": MSG_AUTH})
             await self.state_to("listen")
             return
@@ -408,18 +408,20 @@ async def _startup() -> None:
 
 @app.websocket("/ws")
 async def voice_socket(ws: WebSocket):
-    token = ws.cookies.get(COOKIE)
-    if not await MFA.session_ok(token, touch=False):
-        await ws.close(code=4401)
-        return
+    # The socket is opened BEFORE authentication: the code has to be spoken, and the
+    # microphone is only reachable through this socket. Nothing is executed until a
+    # session exists — start_turn() re-checks it on every turn.
+    token = ws.cookies.get(COOKIE) or ""
+    authorised = await MFA.session_ok(token, touch=False)
     await ws.accept()
     session = Session(ws, token or "")
     await session.send_json({"t": "ready", "in_rate": P.IN_RATE, "out_rate": 24000,
                              "idle_minutes": IDLE_MINUTES,
                              "voice": session.voice, "asr": "sherpa" if session.asr else "whisper"})
-    # A turn is only authenticated once a spoken code matches a live challenge. Until
-    # then the assistant says one line and nothing else (spec A1).
-    await session.say(MSG_AUTH, session.gen, True)
+    # Until a spoken code matches a live challenge, say one line and nothing else
+    # (spec A1). An already-authenticated client is greeted with silence.
+    if not authorised:
+        await session.say(MSG_AUTH, session.gen, True)
     pending = bytearray()
     frame_bytes = P.FRAME_SAMPLES * 2
     try:
@@ -453,6 +455,12 @@ async def voice_socket(ws: WebSocket):
                     session.speed = min(1.4, max(0.7, float(control.get("v", 1.0))))
                 except (TypeError, ValueError):
                     pass
+            elif kind == "text" and isinstance(control.get("v"), str):
+                # Authenticated client resends the request that rode along with the code,
+                # so one sentence can both approve and ask (no duplicate dictation).
+                request_text = control["v"].strip()
+                if request_text:
+                    await session.start_turn(request_text, np.zeros(0, dtype=np.float32))
             elif kind == "ping":
                 await session.send_json({"t": "pong"})
             elif kind == "close":

@@ -86,3 +86,17 @@ def test_digits_only_extraction_handles_groups(st):
     assert S.find_code("el 472913 por favor", "472913")
     # ASR drops the spaces between spoken digits; a split group must still join.
     assert S.find_code("el 472 913", "472913")
+
+
+def test_live_reports_usability(st):
+    created = st.create()
+    assert st.live(created.id)
+    assert st.verify(created.id, created.code).ok
+    assert not st.live(created.id)       # consumed
+    assert not st.live("nonexistent")
+
+
+def test_live_goes_false_when_expired(st):
+    created = st.create()
+    st.db.execute("UPDATE challenges SET created=? WHERE id=?", (time.time() - 400, created.id))
+    assert not st.live(created.id)

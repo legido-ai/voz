@@ -76,6 +76,16 @@ async def challenge(request: Request):
             "code_length": S.CODE_LEN, "sent": sent, "retry_after": wait}
 
 
+@app.get("/api/auth/challenge/{ident}")
+async def challenge_state(ident: str):
+    """Whether a challenge is still usable (live, unused, unexpired).
+
+    The web app reuses a live challenge instead of pushing a second Telegram message;
+    this is how it avoids reusing one that something else already consumed.
+    """
+    return {"live": STORE.live(ident)}
+
+
 @app.post("/api/auth/verify")
 async def verify(request: Request):
     try:

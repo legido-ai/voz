@@ -47,12 +47,6 @@ def test_password_auth_is_gone():
     assert "MFA.verify" in source and "MFA.session_ok" in source
 
 
-def test_websocket_requires_a_live_session():
-    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
-    ws = source.split('@app.websocket("/ws")', 1)[1].split("@app.on_event", 1)[0]
-    assert "MFA.session_ok" in ws and "4401" in ws
-
-
 def test_verify_maps_rejections_to_401():
     source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
     body = source.split("async def auth_verify", 1)[1].split("@app.get", 1)[0]
@@ -91,3 +85,21 @@ def test_a_suppressed_push_is_not_cached_as_reusable():
     source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
     body = source.split("async def auth_challenge", 1)[1].split('@app.post("/api/auth/verify"', 1)[0]
     assert "if created.sent:" in body
+
+
+def test_authenticated_client_can_resend_the_request_as_text():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    assert 'kind == "text"' in source
+    js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
+    assert "function stripCode" in js and "t: 'text'" in js
+
+
+def test_websocket_accepts_before_authentication_but_turns_are_gated():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    ws = source.split('@app.websocket("/ws")', 1)[1].split("@app.on_event", 1)[0]
+    # The socket must open without a session (the code is spoken through it)...
+    assert "await ws.accept()" in ws
+    assert "ws.close(code=4401)" not in ws
+    # ...while every turn still re-checks the session.
+    turn = source.split("async def start_turn", 1)[1].split("async def respond", 1)[0]
+    assert "MFA.session_ok" in turn

@@ -82,6 +82,16 @@ async def new_challenge(client_ip: str = "") -> Challenge | None:
     )
 
 
+async def is_live(challenge_id: str) -> bool:
+    """Whether voz-mfa still holds this challenge live (not used, not expired)."""
+    try:
+        response = await client().get(
+            f"{os.environ.get('MFA_URL', MFA_URL).rstrip('/')}/api/auth/challenge/{challenge_id}")
+        return bool(response.json().get("live"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def verify(token: str, challenge_id: str | None = None) -> Verdict:
     """Check a transcript. A failure is a normal outcome, not an error."""
     try:
