@@ -471,7 +471,11 @@ async def voice_socket(ws: WebSocket):
     # microphone is only reachable through this socket. Nothing is executed until a
     # session exists — start_turn() re-checks it on every turn.
     token = ws.cookies.get(COOKIE) or ws.query_params.get("s") or ""
-    authorised = await MFA.session_ok(token, touch=False)
+    # A reconnect is activity: let it renew the idle clock so a live session is not
+    # treated as expired just because it was idle on the wire.
+    authorised = await MFA.session_ok(token, touch=True)
+    print(f"ws: session={'renewed' if authorised else 'none'}"
+          f"{' (token presented)' if token and not authorised else ''}", flush=True)
     await ws.accept()
     print(f"ws: {ws.client.host if ws.client else '?'} connected "
           f"(session={'yes' if authorised else 'no'})", flush=True)

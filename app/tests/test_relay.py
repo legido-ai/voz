@@ -174,3 +174,9 @@ def test_the_relay_verifies_the_spoken_code_itself():
     js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
     assert "case 'session':" in js
     assert "verify(message" not in js         # the client no longer posts the transcript
+
+
+def test_a_reconnect_renews_the_idle_clock():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    ws = source.split('@app.websocket("/ws")', 1)[1].split("session = Session", 1)[0]
+    assert "session_ok(token, touch=True)" in ws
