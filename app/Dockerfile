@@ -9,8 +9,9 @@ WORKDIR /srv
 COPY requirements.txt /srv/requirements.txt
 RUN pip install --no-cache-dir -r /srv/requirements.txt
 
-COPY main.py pipeline.py asr.py authdb.py /srv/
+COPY main.py pipeline.py asr.py mfa.py /srv/
 COPY static /srv/static
 
 EXPOSE 9000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000", "--ws-ping-interval", "25", "--ws-ping-timeout", "60", "--no-access-log"]
+

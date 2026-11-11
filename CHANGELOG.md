@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.2.0 — 2026-11-10
+
+### Added
+- **`voz-mfa`, servicio de autenticación fuera de banda** (nuevo contenedor): genera
+  un número de 6 cifras por desafío, lo entrega por Telegram y guarda solo
+  `sha256(nonce:código)`. El número nunca cruza hacia la web. 5 minutos de vida,
+  5 intentos, un solo uso (FR-001..FR-006).
+- Desafío creado al abrir la página; el transcript hablado se valida en
+  `POST /api/auth/verify` y un acierto emite una sesión con TTL deslizante de 15
+  minutos renovada en cada turno (FR-005, FR-009).
+- Relay al **perfil Hermes `voz`**: `voz` habla con el API server del gateway
+  (`/p/voz/v1`) en lugar del proveedor del modelo, así que puede ejecutar
+  herramientas y no guarda ninguna clave de modelo (FR-007).
+- Imágenes públicas en GHCR (`ghcr.io/legido-ai/voz`, `ghcr.io/legido-ai/voz-mfa`)
+  construidas para amd64 y arm64 por el workflow de publicación (FR-010).
+- `app/tests/e2e_turn.py`: recorrido completo sin red (desafío → código → sesión →
+  turno → relay) con relays falsos.
+
+### Changed
+- La app pasa a decir **solo dos frases** por voz: «Necesitas autenticarte.» y
+  «Error en la autenticación.»; no explica dónde está el número ni qué hacer
+  (enmienda A1 de la especificación).
+- La sesión ya no dura 60 días: 15 minutos de inactividad, renovados por uso.
+
+### Removed
+- Login por usuario/contraseña contra `accounts.db` y el hash `VOZ_PASS_HASH`;
+  `authdb.py`, `VOZ_COOKIE_SECRET` y el bloqueo por IP del formulario, que ya no
+  tiene formulario donde aplicarse.
+- La credencial `OPENCODE_GO_API_KEY` en el contenedor `voz`.
+
+### Security
+- **Un `GET` anónimo ya no puede hacer sonar el teléfono.** El desafío se genera en el
+  primer toque del micrófono, no al cargar la página (FR-009 revisado).
+- Emisión limitada por cliente (3/10 min) con reutilización del desafío vivo durante
+  4 min, y en `voz-mfa` cooldown global de 20 s / 6 por hora; una emisión suprimida
+  no se cachea como reutilizable.
+- Cada emisión y cada fallo de verificación registran la IP del cliente.
+
+### Added
+- La sesión se guarda en el móvil y se reanuda en la siguiente conexión (`?s=<token>`):
+  recargar la página ya no pide un código nuevo mientras la sesión siga viva.
+
+### Fixed
+- El relay apuntaba a `host.docker.internal`, que resuelve al gateway de Docker y no
+  al contenedor de Hermes; ahora usa `http://hermes:8642/p/voz/v1` y el contenedor se
+  conecta a `box_default`, porque Docker aísla las redes bridge entre sí.
+- El perfil `voz` heredó la regla de cierre «✅ I'm done», que se leía en voz alta: se
+  retiró de su memoria y `speakable()` descarta ese marcador si vuelve a aparecer.
+
+### Security
+- El número de aprobación es de un uso, caduca y tiene intentos limitados; una
+  reutilización responde `used`, un código viejo `expired`.
+- El desafío caducado o agotado se quema y la app pide uno nuevo sin recargar, para
+  que un fallo no deje la sesión en un estado que parezca roto.
+- `voz` se niega a arrancar sin `HERMES_API_KEY` (fallo cerrado) en lugar de
+  fallar dentro de un turno de voz.
+
 ## 0.1.3 — 2026-11-09
 
 - Interfaz: círculo de grabación al máximo que cabe (337 px en un iPhone de

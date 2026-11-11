@@ -22,9 +22,11 @@ FRAME_SAMPLES = IN_RATE * FRAME_MS // 1000
 STT_URL = os.environ.get("STT_URL", "").rstrip("/")   # whisper fallback, optional
 TTS_URL = os.environ.get("TTS_URL", "http://voz-tts:9000").rstrip("/")
 
-LLM_BASE = os.environ.get("LLM_BASE", "https://opencode.ai/zen/go/v1").rstrip("/")
-LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4.1-flash")
-LLM_KEY = os.environ.get("OPENCODE_GO_API_KEY", "")
+# The relay talks to a Hermes profile, not to the model provider: `voz` holds no
+# model credential, only the API-server key of the `voz` profile.
+LLM_BASE = os.environ.get("HERMES_BASE", "http://host.docker.internal:8642/v1").rstrip("/")
+LLM_MODEL = os.environ.get("HERMES_MODEL", "opencode-go/deepseek-v4.1-flash")
+LLM_KEY = os.environ.get("HERMES_API_KEY", "").strip()
 LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "900"))
 LLM_SESSION = os.environ.get("LLM_SESSION") or f"voz-{uuid.uuid4().hex[:12]}"
 
@@ -56,14 +58,14 @@ class VAD:
         threshold: float = 0.011,
         barge_threshold: float = 0.028,
         start_ms: int = 140,
-        end_ms: int = 500,
+        end_ms: int = 900,          # VOZ_END_MS: a natural pause must not cut the user
         max_ms: int = 25000,
         preroll_ms: int = 200,
     ) -> None:
         self.threshold = threshold
         self.barge_threshold = barge_threshold
         self.start_frames = max(1, start_ms // FRAME_MS)
-        self.end_frames = max(1, end_ms // FRAME_MS)
+        self.end_frames = max(1, int(os.environ.get("VOZ_END_MS", end_ms)) // FRAME_MS)
         self.max_frames = max_ms // FRAME_MS
         self.preroll = max(1, preroll_ms // FRAME_MS)
         self.floor = 0.0035
@@ -133,7 +135,12 @@ _EMOJI = re.compile(
 _SENT_END = re.compile(r"[.!?…]+(?=\s|$)")
 
 
+_ARTIFACT = re.compile(r"\bi'?m done\b[.!\s]*$", re.IGNORECASE)
+
+
 def speakable(text: str) -> str:
+    # A chat-oriented agent may append sign-off markers; they must never be voiced.
+    text = _ARTIFACT.sub("", text or "")
     text = _EMOJI.sub(" ", text or "")
     text = _MD.sub(" ", text)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
@@ -227,9 +234,9 @@ async def transcribe(audio: np.ndarray) -> str:
 
 
 async def stream_reply(messages: list[dict]) -> AsyncIterator[str]:
-    """Stream visible answer text from OpenCode Go, dropping reasoning deltas."""
+    """Stream visible answer text from the Hermes `voz` profile, dropping reasoning deltas."""
     if not LLM_KEY:
-        raise RuntimeError("OPENCODE_GO_API_KEY is not set")
+        raise RuntimeError("HERMES_API_KEY is not set")
     payload = {
         "model": LLM_MODEL,
         "stream": True,

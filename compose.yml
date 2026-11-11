@@ -1,9 +1,29 @@
 # Reference compose for the voz stack. Deployment on this box uses `docker build`
 # + `docker run` against the Engine (see README), because the Engine cannot see
 # the Hermes workspace. This file documents the wiring.
+#
+# 003: `voz` relays to the Hermes `voz` profile and authenticates through `voz-mfa`.
+# The app holds no model credential any more; the only secret it carries is the
+# API-server key of the Hermes profile it calls.
 services:
+  voz-mfa:
+    image: ghcr.io/legido-ai/voz-mfa:current
+    container_name: voz-mfa
+    restart: unless-stopped
+    environment:
+      MFA_DB: /data/mfa.db
+      MFA_TTL_SECONDS: "300"          # the code lives 5 minutes
+      MFA_MAX_ATTEMPTS: "5"           # then the challenge is dead
+      MFA_BOT_TOKEN: ${MFA_BOT_TOKEN} # bot that delivers the number
+      MFA_CHAT_ID: ${MFA_CHAT_ID}     # Javier's chat with that bot
+      MFA_OUTBOX: "1"                 # keep sent codes for diagnostics
+      VOZ_IDLE_MINUTES: "15"          # sliding session, renewed per turn
+    volumes:
+      - voz-mfa-data:/data
+    networks: [voz]
+
   voz-stt:
-    image: speech-to-text:current          # faster-whisper small, int8, Spanish
+    image: speech-to-text:current      # legacy whisper fallback, not deployed
     container_name: voz-stt
     restart: unless-stopped
     environment:
@@ -15,7 +35,7 @@ services:
     networks: [voz]
 
   voz-tts:
-    image: voz-tts:current                 # Kokoro-82M int8, Apache-2.0
+    image: ghcr.io/legido-ai/voz-tts:current
     container_name: voz-tts
     restart: unless-stopped
     volumes:
@@ -27,19 +47,21 @@ services:
     networks: [voz]
 
   voz:
-    image: voz:current
+    image: ghcr.io/legido-ai/voz:current
     container_name: voz
     restart: unless-stopped
-    depends_on: [voz-stt, voz-tts]
+    depends_on: [voz-mfa, voz-tts]
     environment:
-      STT_URL: http://voz-stt:9000
+      STT_URL: ""                      # sherpa streaming in process
       TTS_URL: http://voz-tts:9000
-      LLM_BASE: https://opencode.ai/zen/go/v1
-      LLM_MODEL: deepseek-v4.1-flash
-      OPENCODE_GO_API_KEY: ${OPENCODE_GO_API_KEY}
-      VOZ_COOKIE_SECRET: ${VOZ_COOKIE_SECRET}
-      VOZ_PASS_HASH: ${VOZ_PASS_HASH}
-    networks: [voz, edge]
+      MFA_URL: http://voz-mfa:8000
+      HERMES_BASE: http://hermes:8642/p/voz/v1
+      HERMES_MODEL: voz
+      HERMES_API_KEY: ${HERMES_API_KEY}
+      VOZ_IDLE_MINUTES: "15"
+    # box_default: the Hermes API listener is bound to the box interface, and Docker
+    # isolates bridge networks from each other, so the relay needs a shared network.
+    networks: [voz, edge, hermes]
     labels:
       traefik.enable: "true"
       traefik.http.routers.voz.rule: "Host(`voz.oci2.legido.com`)"
@@ -52,7 +74,12 @@ networks:
     name: voz-net
   edge:
     external: true
+  hermes:
+    name: box_default
+    external: true
 
 volumes:
   voz-models:
     name: voz-models
+  voz-mfa-data:
+    name: voz-mfa-data

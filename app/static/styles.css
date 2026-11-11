@@ -142,3 +142,9 @@ body.is-listen .hint, body.is-speak .hint, body.is-think .hint { opacity: 0; }
   width: 100%; background: var(--accent); color: #1a0d03; border: 0; border-radius: 12px;
   padding: 14px 16px; font-size: 16px; font-weight: 600; font-family: inherit;
 }
+
+/* Live microphone level: the difference between "the app is deaf" and "the server is deaf". */
+.levelbar { width: 132px; height: 6px; margin: 10px auto 0; border-radius: 3px;
+  background: rgba(255,255,255,.12); overflow: hidden; }
+.levelbar span { display: block; height: 100%; width: 0%; border-radius: 3px;
+  background: linear-gradient(90deg, #2f9e44, #f2c94c 70%, #eb5757); transition: width .08s linear; }
