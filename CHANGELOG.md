@@ -38,6 +38,10 @@
   no se cachea como reutilizable.
 - Cada emisión y cada fallo de verificación registran la IP del cliente.
 
+### Added
+- La sesión se guarda en el móvil y se reanuda en la siguiente conexión (`?s=<token>`):
+  recargar la página ya no pide un código nuevo mientras la sesión siga viva.
+
 ### Fixed
 - El relay apuntaba a `host.docker.internal`, que resuelve al gateway de Docker y no
   al contenedor de Hermes; ahora usa `http://hermes:8642/p/voz/v1` y el contenedor se
