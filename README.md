@@ -160,6 +160,23 @@ Dos condiciones de red, ambas verificadas a mano:
 - Voz: Dora, Álex, Santa (Kokoro, naturales) o Piper (femenina/masculina, rápidas).
 - Ritmo 0,8-1,2 y transcripción opcional (apagada por defecto: la app es voz).
 
+## Marca
+
+`brand/logo.py` es la fuente única del logo: dibuja la marca desde geometría (no
+hay un PNG suelto que alguien tenga que rehacer). Misma identidad que el icono de
+la PWA —cuatro barras redondeadas en `#ff8a3d` / `#ffb37a` sobre `#08090c`, con el
+anillo tenue `#2e241e`— pero con las barras al 55 % del lienzo en lugar del 32 %:
+a 40 px (la lista de chats de Telegram) la versión pequeña se fundía en una mancha.
+
+```sh
+python3 brand/logo.py                              # brand/voz-mark-1024.png, lockup, avatar
+python3 brand/logo.py --icons app/static/icons     # además los iconos de la PWA
+```
+
+- `brand/voz-mark.svg` — maestro vectorial, mismas coordenadas que el generador.
+- `brand/voz-avatar-256.jpg` — el avatar del bot `@legido_voz_bot`.
+- `brand/voz-mark-glow.png` — variante con halo, para fondos claros.
+
 ## Tests
 
 ```sh

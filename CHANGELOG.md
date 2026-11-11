@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.1 — 2026-11-11
+
+### Añadido
+
+- **`brand/` — la marca en un solo sitio.** `logo.py` dibuja el logo desde
+  geometría y emite el maestro vectorial (`voz-mark.svg`), el PNG de 1024, el
+  lockup con la palabra y el avatar de 256 del bot. Paleta e identidad las del
+  icono que ya servía la PWA; lo que cambia es el aire: las barras ocupan el 55 %
+  del lienzo en vez del 32 %, porque a 40 px —el tamaño real de un avatar en la
+  lista de chats— la versión pequeña se leía como una mancha naranja.
+- `python3 brand/logo.py --icons app/static/icons` regenera el juego de iconos de
+  la PWA desde la misma fuente, para que app y bot no se separen con el tiempo.
+- `@legido_voz_bot` ya lleva `brand/voz-avatar-256.jpg` como foto de perfil
+  (`setMyProfilePhoto`, leída de vuelta con `getUserProfilePhotos`).
+
 ## 0.2.0 — 2026-11-10
 
 ### Added

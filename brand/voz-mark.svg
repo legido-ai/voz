@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Voz">
+  <title>Voz</title>
+  <rect width="1024" height="1024" fill="#08090c"/>
+  <circle cx="512" cy="512" r="399.4" fill="none" stroke="#2e241e" stroke-width="10"/>
+  <g fill="#ffb37a">
+    <rect x="230.42" y="392.75" width="95.86" height="238.5" rx="47.93"/>
+    <rect x="697.76" y="329.25" width="95.86" height="365.5" rx="47.93"/>
+  </g>
+  <g fill="#ff8a3d">
+    <rect x="386.20" y="306.00" width="95.86" height="412.0" rx="47.93"/>
+    <rect x="541.98" y="202.25" width="95.86" height="619.5" rx="47.93"/>
+  </g>
+</svg>
