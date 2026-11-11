@@ -223,6 +223,13 @@
     return false;
   }
 
+  function showLogout(visible) {
+    for (const id of ['logout', 'logoutTop']) {
+      const el = $(id);
+      if (el) el.hidden = !visible;
+    }
+  }
+
   // The code is verified server-side, in the same phrase as the request: the app never
   // knows which six digits were sent to Telegram.
   async function verify(token) {
@@ -424,9 +431,11 @@
         // own idea of the session is what left him talking with no code in Telegram.
         if (message.authorised === false) {
           phase = 'auth';
+          showLogout(false);
           ensureChallenge();
         } else {
           phase = 'open';
+          showLogout(true);
         }
         break;
       case 'state':
@@ -440,6 +449,7 @@
       case 'session':
         // The relay verified the code and handed us the session: remember it for reconnects.
         phase = 'open';
+        showLogout(true);
         asked = false;
         challenge = null;
         try { localStorage.setItem('voz.session', message.token || ''); } catch (e) {}
@@ -502,11 +512,10 @@
     setState('listen', 'Te escucho');
   });
 
-  hangup.addEventListener('click', async (event) => {
+  hangup.addEventListener('click', (event) => {
     event.stopPropagation();
-    // Hanging up ends the call: the server session goes with it, so the next tap needs a
-    // fresh code. Without the revoke, the token stayed valid and "hang up" was cosmetic.
-    await endSession();
+    // Hanging up is not logging out: it ends the call (socket, microphone, playback) and
+    // keeps the session, so the next tap resumes without a code.
     stop(false);
   });
 
@@ -523,10 +532,19 @@
   }
 
   const logoutEl = $('logout');
+  const logoutTop = $('logoutTop');
+  if (logoutTop) {
+    logoutTop.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const target = $('logout');
+      if (target) target.click();
+    });
+  }
   if (logoutEl) {
     logoutEl.addEventListener('click', async (event) => {
       event.preventDefault();
       await endSession();
+      showLogout(false);
       if (active) stop(false);
       location.href = '/';
     });
