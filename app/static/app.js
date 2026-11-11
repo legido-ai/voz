@@ -9,6 +9,7 @@
         voiceEl = $('voice'), speedEl = $('speed'), captionsEl = $('captions');
 
   const IN_RATE = 16000, OUT_RATE = 24000;
+  const BUILD = 'scriptproc-1';   // logged by the server on connect
   const LS = { voice: 'voz.voice', speed: 'voz.speed', captions: 'voz.captions' };
 
   let ws = null, ctx = null, mediaStream = null, micNode = null, micSource = null;
@@ -130,7 +131,12 @@
       // (verified) and silence is the normal state while the user reads a code.
       if (!silentSince) silentSince = Date.now();
       else if (Date.now() - silentSince > 4000 && state === 'listen') {
-        statusEl.textContent = 'Micrófono sin señal · toca para reintentar';
+        // In-app browsers hand over a muted track: the graph is alive, the samples are
+        // zero. Naming the browser is more useful than blaming the microphone.
+        const inApp = /Telegram|FBAN|FBAV|Instagram|Line\//i.test(navigator.userAgent);
+        statusEl.textContent = inApp
+          ? 'Micrófono bloqueado por este navegador · abre en Safari'
+          : 'Micrófono sin señal · toca para reintentar';
         silentSince = Date.now();
       }
     } else {
@@ -177,8 +183,11 @@
     if (!body.needs_auth) { phase = 'open'; return true; }
     phase = 'auth';
     challenge = body.challenge || null;
-    setState('idle', body.message || 'Necesitas autenticarte.');
-    speak(body.message || 'Necesitas autenticarte.');
+    // A challenge whose code was not delivered is useless: say so instead of waiting.
+    const delivered = !challenge || challenge.sent !== false;
+    setState('idle', delivered ? (body.message || 'Necesitas autenticarte.')
+                               : 'Error en la autenticación.');
+    speak(delivered ? (body.message || 'Necesitas autenticarte.') : 'Error en la autenticación.');
     return false;
   }
 
@@ -339,6 +348,7 @@
       lastPong = Date.now();
       netState('live');
       setState('listen', 'Te escucho');
+      ws.send(JSON.stringify({ t: 'hello', v: BUILD }));
       ws.send(JSON.stringify({ t: 'voice', v: voiceEl.value }));
       ws.send(JSON.stringify({ t: 'speed', v: parseFloat(speedEl.value) }));
       if (!heartbeat) heartbeat = window.setInterval(() => {
