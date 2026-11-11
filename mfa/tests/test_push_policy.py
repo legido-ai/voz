@@ -97,3 +97,15 @@ def test_only_one_live_challenge_per_caller(mfa):
     # once consumed, nothing is live
     s.verify(first.id, first.code)
     assert s.live_for("1.2.3.4") is None
+
+
+def test_a_caller_that_keeps_failing_goes_quiet():
+    """A stranger poking the mic must not keep ringing the phone with codes."""
+    source = open(os.path.join(MFA_DIR, "app.py"), encoding="utf-8").read()
+    assert "def _blocked(" in source
+    assert "MFA_FAIL_LIMIT" in source and "MFA_FAIL_WINDOW" in source
+    # failures are recorded where the verify verdict is known
+    assert "_fails.setdefault(who, [])" in source
+    # and the push path consults it before sending
+    body = source.split("async def challenge(", 1)[1].split("@app.get", 1)[0]
+    assert "_blocked(caller)" in body

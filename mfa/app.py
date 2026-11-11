@@ -30,6 +30,23 @@ SEND_COOLDOWN = int(os.environ.get("MFA_SEND_COOLDOWN", "20"))     # seconds bet
 SEND_HOURLY = int(os.environ.get("MFA_SEND_HOURLY", "6"))          # per rolling hour
 _sent_at: list[float] = []
 
+# A stranger who finds the URL can tap the microphone, which rings the user's phone with a
+# code he did not ask for. It is harmless (the code goes to him, not to the stranger) but
+# it is noise: silence a caller that keeps failing to authenticate.
+FAIL_WINDOW = int(os.environ.get("MFA_FAIL_WINDOW", "1800"))   # 30 min
+FAIL_LIMIT = int(os.environ.get("MFA_FAIL_LIMIT", "3"))        # before going quiet
+_fails: dict[str, list[float]] = {}
+
+
+def _blocked(caller: str) -> int:
+    """Seconds left on this caller's silence, 0 when it may push again."""
+    now = time.time()
+    seen = [t for t in _fails.get(caller, []) if now - t < FAIL_WINDOW]
+    _fails[caller] = seen
+    if len(seen) < FAIL_LIMIT:
+        return 0
+    return max(1, int(FAIL_WINDOW - (now - seen[-1])))
+
 
 def _is_public(addr: str) -> bool:
     """A real visitor arrives through Traefik with a public address.
@@ -82,7 +99,11 @@ async def challenge(request: Request):
         return {"id": existing, "expires_in": STORE.ttl, "code_length": S.CODE_LEN,
                 "sent": True, "reused": True}
     created = STORE.create(caller)
-    allowed, wait = _may_send()
+    silent = _blocked(caller)
+    allowed, wait = _may_send() if not silent else (False, silent)
+    if silent:
+        print(f"mfa: push suppressed (caller {caller} failed {FAIL_LIMIT}x, {silent}s)",
+              flush=True)
     sent, message_id = False, None
     if not _is_public(caller):
         print(f"mfa: push suppressed (non-public caller {caller})", flush=True)
@@ -122,8 +143,10 @@ async def verify(request: Request):
     ident = body.get("id") or request.headers.get("x-challenge")
     verdict = STORE.verify(ident if isinstance(ident, str) else None, text)
     if not verdict.ok:
-        print(f"mfa: verify failed reason={verdict.reason} "
-              f"caller={request.headers.get('x-client-ip', '?')}", flush=True)
+        who = request.headers.get("x-client-ip", "?")
+        if verdict.reason in {"no_code", "wrong"}:
+            _fails.setdefault(who, []).append(time.time())
+        print(f"mfa: verify failed reason={verdict.reason} caller={who}", flush=True)
         return JSONResponse({"ok": False, "reason": verdict.reason}, status_code=401)
     return {"ok": True, "session": verdict.session, "expires_in": verdict.expires_in}
 
