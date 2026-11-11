@@ -76,9 +76,9 @@ def test_challenge_is_rate_limited_and_reused_per_client():
 
 def test_client_does_not_mint_a_challenge_on_load():
     js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
-    boot = js.rsplit("})();", 2)[0][-600:]
-    assert "needChallenge()" not in boot
-    assert "checkSession()" in boot
+    tail = js[-400:]                     # the boot block runs last
+    assert "needChallenge()" not in tail.split("setState('idle'", 1)[0]
+    assert "setState('idle', 'Toca y habla')" in tail
 
 
 def test_a_suppressed_push_is_not_cached_as_reusable():
@@ -164,3 +164,13 @@ def test_capture_uses_script_processor_not_the_worklet():
     assert "createScriptProcessor" in js
     assert "audioWorklet" not in js
     assert "function sendBlock" in js
+
+
+def test_the_relay_verifies_the_spoken_code_itself():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    turn = source.split("async def start_turn", 1)[1].split("async def respond", 1)[0]
+    assert "MFA.verify(text" in turn          # server-side, not a client round trip
+    assert '"t": "session"' in turn
+    js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
+    assert "case 'session':" in js
+    assert "verify(message" not in js         # the client no longer posts the transcript

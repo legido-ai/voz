@@ -321,6 +321,16 @@ class Session:
 
     async def start_turn(self, text: str, audio: np.ndarray) -> None:
         # Every executed turn renews the idle clock; an expired session ends the call.
+        if not await MFA.session_ok(self.session, touch=True) and text:
+            # Verify the spoken code HERE. The client used to do it over HTTP, which adds
+            # two hops and a whole class of silent failures; the relay already holds the
+            # transcript, so it asks voz-mfa directly and adopts the session it gets back.
+            verdict = await MFA.verify(text, None)
+            if verdict.ok and verdict.session:
+                self.session = verdict.session
+                print(f"auth: adopted session from the spoken code", flush=True)
+                await self.send_json({"t": "session", "token": verdict.session,
+                                      "expires_in": verdict.expires_in})
         if not await MFA.session_ok(self.session, touch=True):
             await self.interrupt(tell_client=True)
             # The client verifies the code from the transcript, so an unauthenticated
@@ -460,7 +470,7 @@ async def voice_socket(ws: WebSocket):
     # The socket is opened BEFORE authentication: the code has to be spoken, and the
     # microphone is only reachable through this socket. Nothing is executed until a
     # session exists — start_turn() re-checks it on every turn.
-    token = ws.cookies.get(COOKIE) or ""
+    token = ws.cookies.get(COOKIE) or ws.query_params.get("s") or ""
     authorised = await MFA.session_ok(token, touch=False)
     await ws.accept()
     print(f"ws: {ws.client.host if ws.client else '?'} connected "

@@ -20,6 +20,7 @@
   let state = 'idle', showCaptions = false, connectedAt = 0;
   let phase = 'auth';              // auth | open — governed by the voz-mfa challenge
   let challenge = null;            // {id} while waiting for the spoken code
+  let _session = '';               // session token handed over by the relay
   let reconnects = 0;              // consecutive reconnects in this call
   let lastPong = 0;                // heartbeat: a silent socket is a dead socket
   let heartbeat = 0;
@@ -372,7 +373,9 @@
   // stay up, so a dropped connection is invisible unless it cannot be restored.
   function openSocket() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    const saved = _session || (function () { try { return localStorage.getItem('voz.session') || ''; } catch (e) { return ''; } })();
+    const query = saved ? `?s=${encodeURIComponent(saved)}` : '';
+    ws = new WebSocket(`${proto}://${location.host}/ws${query}`);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
       connectedAt = Date.now();
@@ -433,7 +436,14 @@
         break;
       case 'heard':
         caption(message.text ? '“' + message.text + '”' : '');
-        if (phase === 'auth') verify(message.text || '');
+        break;
+      case 'session':
+        // The relay verified the code and handed us the session: remember it for reconnects.
+        phase = 'open';
+        asked = false;
+        challenge = null;
+        try { localStorage.setItem('voz.session', message.token || ''); } catch (e) {}
+        _session = message.token || '';
         break;
       case 'partial':
         if (showCaptions) caption('… ' + message.text);
