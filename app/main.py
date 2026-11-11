@@ -508,6 +508,8 @@ async def voice_socket(ws: WebSocket):
                 request_text = control["v"].strip()
                 if request_text:
                     await session.start_turn(request_text, np.zeros(0, dtype=np.float32))
+            elif kind == "diag":
+                print(f"diag: {json.dumps(control.get('v') or {}, ensure_ascii=False)}", flush=True)
             elif kind == "hello":
                 print(f"client: {control.get('v')}", flush=True)
             elif kind == "ping":

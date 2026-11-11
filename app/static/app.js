@@ -113,6 +113,26 @@
     if (pcm && pcm.length) { ws.send(pcm.buffer); window.__voz.sent++; }
   }
 
+  let lastDiag = 0;
+
+  function sendDiag(level) {
+    const now = Date.now();
+    if (now - lastDiag < 2000 || !ws || ws.readyState !== 1) return;
+    lastDiag = now;
+    const track = (mediaStream && mediaStream.getAudioTracks()[0]) || null;
+    ws.send(JSON.stringify({ t: 'diag', v: {
+      ctx: ctx ? ctx.state : '-',
+      rate: ctx ? ctx.sampleRate : 0,
+      track: track ? track.readyState : 'none',
+      muted: track ? track.muted : null,
+      enabled: track ? track.enabled : null,
+      peak: level,
+      blockMax: (window.__voz || {}).blockMax,
+      sent: (window.__voz || {}).sent,
+      ua: navigator.userAgent.slice(0, 60),
+    }}));
+  }
+
   function analyse() {
     if (!analyser) return;
     const data = new Uint8Array(analyser.fftSize);
@@ -121,6 +141,7 @@
     for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i] - 128));
     const level = Math.min(1, peak / 90);
     if (levelFill) { levelBar.hidden = false; levelFill.style.width = Math.round(level * 100) + '%'; }
+    if (active) sendDiag(peak);
     // iOS hands us silence when the context was created outside a gesture, or when the
     // mic is muted. Say so instead of pretending to listen.
     if (peak === 0) {
