@@ -193,6 +193,16 @@
 
   // Mint on intent only. The server reuses a live challenge for this client, so a
   // second tap does not push a second Telegram message.
+  // Ask for a code at most once per episode: voz-mfa reuses the caller's live challenge,
+  // so this cannot produce a second message, and the flag stops the UI from asking twice.
+  let asked = false;
+
+  function ensureChallenge() {
+    if (asked) return;
+    asked = true;
+    needChallenge();
+  }
+
   async function needChallenge() {
     const response = await fetch('/api/auth/challenge', { cache: 'no-store' });
     if (response.status === 429) {
@@ -223,6 +233,8 @@
       const body = await response.json();
       if (body.ok) {
         phase = 'open';
+        asked = false;
+        challenge = null;
         // The code rode along with the request: run the request now, once, without the
         // digits (the user must not have to dictate the same sentence twice).
         const request = stripCode(token);
@@ -404,6 +416,15 @@
   function handle(message) {
     switch (message.t) {
       case 'ready':
+        // The server is the authority on the session: if it says we are not authorised,
+        // make sure a code exists *now*, before the user speaks. Trusting the client's
+        // own idea of the session is what left him talking with no code in Telegram.
+        if (message.authorised === false) {
+          phase = 'auth';
+          ensureChallenge();
+        } else {
+          phase = 'open';
+        }
         break;
       case 'state':
         if (message.v === 'listen') { setState('listen', 'Te escucho'); }
@@ -430,7 +451,7 @@
         // feel like it "stops listening" mid-sentence.
         phase = 'auth';
         setState('listen', 'Te escucho');
-        if (!challenge) needChallenge();
+        ensureChallenge();
         break;
       case 'voice':
         break;

@@ -84,3 +84,16 @@ def test_outbox_records_caller_and_message_id(mfa):
     row = mfa.STORE.db.execute(
         "select caller, message_id, sent from outbox order by id desc limit 1").fetchone()
     assert row == ("82.70.92.83", 42, 1)
+
+
+def test_only_one_live_challenge_per_caller(mfa):
+    """One code in Telegram at a time: a second request returns the same challenge."""
+    s = mfa.STORE
+    first = s.create("1.2.3.4")
+    live = s.live_for("1.2.3.4")
+    assert live == first.id
+    # a different caller is independent
+    assert s.live_for("5.6.7.8") is None
+    # once consumed, nothing is live
+    s.verify(first.id, first.code)
+    assert s.live_for("1.2.3.4") is None

@@ -74,7 +74,14 @@ async def healthz():
 @app.get("/api/auth/challenge")
 async def challenge(request: Request):
     caller = request.headers.get("x-client-ip", "?").strip() or "?"
-    created = STORE.create()
+    # One code in Telegram at a time: if the caller still has a live challenge, hand it
+    # back instead of pushing a second message. The user asked for exactly one.
+    existing = STORE.live_for(caller)
+    if existing:
+        print(f"mfa: challenge reused for {caller} ({existing[:8]})", flush=True)
+        return {"id": existing, "expires_in": STORE.ttl, "code_length": S.CODE_LEN,
+                "sent": True, "reused": True}
+    created = STORE.create(caller)
     allowed, wait = _may_send()
     sent, message_id = False, None
     if not _is_public(caller):

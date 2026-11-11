@@ -330,7 +330,9 @@ class Session:
             text = await self._auth_transcript(text, audio)
             if text:
                 await self.send_json({"t": "heard", "text": text})
-            # The greeting already said the one allowed line; do not repeat it aloud.
+            # Speaking without a code gets the same line again — and no new code, since a
+            # live challenge is reused by voz-mfa.
+            await self.say(MSG_AUTH, self.gen, True)
             await self.send_json({"t": "auth_expired", "msg": MSG_AUTH})
             await self.state_to("listen")
             return
@@ -465,7 +467,7 @@ async def voice_socket(ws: WebSocket):
           f"(session={'yes' if authorised else 'no'})", flush=True)
     session = Session(ws, token or "")
     await session.send_json({"t": "ready", "in_rate": P.IN_RATE, "out_rate": 24000,
-                             "idle_minutes": IDLE_MINUTES,
+                             "idle_minutes": IDLE_MINUTES, "authorised": bool(authorised),
                              "voice": session.voice, "asr": "sherpa" if session.asr else "whisper"})
     # Until a spoken code matches a live challenge, say one line and nothing else
     # (spec A1). An already-authenticated client is greeted with silence.

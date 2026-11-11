@@ -76,7 +76,10 @@ class Store:
         self.db.execute("""CREATE TABLE IF NOT EXISTS challenges (
             id TEXT PRIMARY KEY, nonce TEXT NOT NULL, code_hash TEXT NOT NULL,
             created REAL NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
-            used INTEGER NOT NULL DEFAULT 0)""")
+            used INTEGER NOT NULL DEFAULT 0, caller TEXT)""")
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(challenges)")}
+        if "caller" not in columns:
+            self.db.execute("ALTER TABLE challenges ADD COLUMN caller TEXT")
         self.db.execute("""CREATE TABLE IF NOT EXISTS sessions (
             token TEXT PRIMARY KEY, created REAL NOT NULL, touched REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS outbox (
@@ -91,15 +94,27 @@ class Store:
 
     # -- challenges -------------------------------------------------------
 
-    def create(self) -> Created:
+    def live_for(self, caller: str) -> str | None:
+        """The caller's live challenge, if any: one code in Telegram at a time."""
+        if not caller:
+            return None
+        with self._lock:
+            row = self.db.execute(
+                "SELECT id FROM challenges WHERE caller=? AND used=0 AND created > ? "
+                "ORDER BY created DESC LIMIT 1",
+                (caller, time.time() - self.ttl),
+            ).fetchone()
+        return row[0] if row else None
+
+    def create(self, caller: str = "") -> Created:
         code = "".join(str(secrets.randbelow(10)) for _ in range(CODE_LEN))
         nonce = secrets.token_hex(16)
         ident = secrets.token_urlsafe(16)
         now = time.time()
         with self._lock:
             self.db.execute(
-                "INSERT INTO challenges (id, nonce, code_hash, created) VALUES (?,?,?,?)",
-                (ident, nonce, _hash(nonce, code), now),
+                "INSERT INTO challenges (id, nonce, code_hash, created, caller) VALUES (?,?,?,?,?)",
+                (ident, nonce, _hash(nonce, code), now, caller),
             )
             self.db.execute("DELETE FROM challenges WHERE created < ?", (now - 86400,))
         return Created(id=ident, code=code, expires_in=self.ttl)

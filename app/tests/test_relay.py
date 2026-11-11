@@ -144,8 +144,12 @@ def test_audio_context_is_created_before_any_await():
     # Nothing may be awaited before the AudioContext exists, or iOS mutes the mic
     # (checking statements, not the prose in the comment above them).
     assert not [l for l in start[:ctx_at].splitlines() if l.strip().startswith("await")]
-    # And the challenge must not block the microphone: socket first, mint after.
-    assert start.index("openSocket();") < start.index("needChallenge();")
+    # The code is requested from the server's own verdict, never before the microphone
+    # exists: 'ready' with authorised=false triggers it.
+    js_all = js
+    ready = js_all.split("case 'ready':", 1)[1].split("case 'state'", 1)[0]
+    assert "ensureChallenge()" in ready
+    assert "openSocket();" in start
 
 
 def test_context_is_resumed_again_after_the_permission_prompt():
