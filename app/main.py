@@ -39,6 +39,23 @@ VOICE_IDS = {"es_f", "es_m", "es_m2", "es_piper_f", "es_piper_m",
              "es_carlfm", "es_davefx", "es_mls10246", "es_mls9972"}
 DECODE_EVERY = 8                      # frames of 20 ms fed to the ASR before decoding
 _DIGITS = re.compile(r"\d")
+_WORD_DIGITS = ("cero|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve")
+_SPOKEN_CODE = re.compile(rf"\b(?:{_WORD_DIGITS})(?:[,\s]+(?:{_WORD_DIGITS})){{5}}\b", re.IGNORECASE)
+_LITERAL_CODE = re.compile(r"\b\d(?:[\s.,]*\d){5}\b")
+_FILLER = re.compile(r"(?i)\s*\b(c[oó]digo|clave|el|es|de|mi)\b\s*")
+
+
+def _is_code_only(text: str) -> bool:
+    """True when nothing but a six-digit code (spoken or literal) was said.
+
+    Then the only sensible reply is one word: the UI already shows the session is up, and
+    forwarding "¿qué necesitas?" to the assistant wastes the user's breath.
+    """
+    rest = _SPOKEN_CODE.sub(" ", text or "")
+    rest = _LITERAL_CODE.sub(" ", rest)
+    rest = _FILLER.sub(" ", rest)
+    rest = re.sub(r"[\s,;.¡!¿?]+", " ", rest).strip()
+    return not rest
 
 # Spec A1: two lines, and nothing else. No hint about Telegram, the code, or what to do.
 MSG_AUTH = "Necesitas autenticarte."
@@ -329,6 +346,7 @@ class Session:
 
     async def start_turn(self, text: str, audio: np.ndarray) -> None:
         # Every executed turn renews the idle clock; an expired session ends the call.
+        _auth_text = text
         if not await MFA.session_ok(self.session, touch=True) and text:
             # Verify the spoken code HERE. The client used to do it over HTTP, which adds
             # two hops and a whole class of silent failures; the relay already holds the
@@ -339,6 +357,11 @@ class Session:
                 print(f"auth: adopted session from the spoken code", flush=True)
                 await self.send_json({"t": "session", "token": verdict.session,
                                       "expires_in": verdict.expires_in})
+                if _is_code_only(text):
+                    await self.interrupt(tell_client=True)
+                    await self.say("Autenticado.", self.gen, True)
+                    await self.state_to("listen")
+                    return
         if not await MFA.session_ok(self.session, touch=True):
             await self.interrupt(tell_client=True)
             # The client verifies the code from the transcript, so an unauthenticated
@@ -537,6 +560,10 @@ async def voice_socket(ws: WebSocket):
                     await session.start_turn(request_text, np.zeros(0, dtype=np.float32))
             elif kind == "diag":
                 print(f"diag: {json.dumps(control.get('v') or {}, ensure_ascii=False)}", flush=True)
+            elif kind == "ack":
+                # One word, nothing else: the UI already shows the session is active.
+                await session.say("Autenticado.", session.gen, True)
+                await session.state_to("listen")
             elif kind == "hello":
                 print(f"client: {control.get('v')}", flush=True)
             elif kind == "ping":

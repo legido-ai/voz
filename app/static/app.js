@@ -178,12 +178,14 @@
 
   // Remove the spoken code (including spaces between digits) from the transcript.
   function stripCode(text) {
-    return (text || '')
-      .replace(/\b\d(?:\s*\d){5}\b/g, ' ')
-      .replace(/\s*(c[oó]digo|clave)\s*/gi, ' ')
-      .replace(/[\s,;.]{2,}/g, ' ')
-      .replace(/^[\s,;.]+|[\s,;.]+$/g, '')
-      .trim();
+    const words = 'cero|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve';
+    let out = (text || '');
+    // Six spoken digits ("tres, cinco, seis, siete, ocho, nueve") or six literal ones.
+    const spoken = new RegExp(`\\b(?:${words})(?:[,\\s]+(?:${words})){5}\\b`, 'gi');
+    out = out.replace(spoken, ' ');
+    out = out.replace(/\b\d(?:[\s.,]*\d){5}\b/g, ' ');
+    out = out.replace(/\s*(c[oó]digo|clave)\s*/gi, ' ');
+    return out.replace(/[\s,;.]+/g, ' ').trim();
   }
 
   async function checkSession() {
@@ -244,9 +246,11 @@
         asked = false;
         challenge = null;
         // The code rode along with the request: run the request now, once, without the
-        // digits (the user must not have to dictate the same sentence twice).
+        // digits (the user must not have to dictate the same sentence twice). If the code
+        // was all he said, confirm with one word instead of asking "¿qué necesitas?".
         const request = stripCode(token);
-        if (request && ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'text', v: request }));
+        if (!request && ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'ack' }));
+        else if (request && ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'text', v: request }));
         return;
       }
       phase = 'auth';

@@ -198,3 +198,26 @@ def test_hangup_keeps_the_session_and_logout_ends_it():
 
     html = open(os.path.join(APP, "static", "index.html"), encoding="utf-8").read()
     assert 'id="logoutTop"' in html and 'hidden' in html.split('id="logoutTop"')[1].split(">")[0]
+
+
+def test_a_code_only_utterance_is_acknowledged_with_one_word():
+    js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
+    assert "t: 'ack'" in js                 # no assistant turn for a bare code
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    assert '"Autenticado."' in source
+    # the client-side stripper must know spoken digits, not just literal ones
+    assert "cero|uno|una|dos|tres" in js
+
+
+def test_code_only_detection():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    ns = {}
+    start = source.index("_DIGITS = re.compile")
+    end = source.index("app = FastAPI(", start) if source.index("app = FastAPI(", start) > start else source.index("@app.get", start)
+    exec("import re\n" + source[start:end], ns)
+    only = ns["_is_code_only"]
+    assert only("cero, tres, tres, siete, cinco, ocho")
+    assert only("codigo 033758")
+    assert only("es 033 758")
+    assert not only("cero, tres, tres, siete, cinco, ocho, dime la capital de España")
+    assert not only("¿qué necesitas?")
