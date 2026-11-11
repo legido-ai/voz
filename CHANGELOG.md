@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.2 — 2026-11-11
+
+### Añadido
+- **La verificación vive en el relay**, no en el navegador: el mismo servidor que ya
+  tiene el transcript canjea el código y adopta la sesión. Antes el navegador hacía un
+  `POST /api/auth/verify` que fallaba en silencio y el código dictado se perdía.
+- **Un código por episodio**: `voz-mfa` mantiene un único desafío vivo por cliente y
+  devuelve el mismo `id` en lugar de empujar otro mensaje.
+- **«Autenticado.»**: si la frase es solo el código, se responde una palabra y no se
+  consulta al perfil (antes el agente contestaba «¿Qué necesitas?» y se perdía un turno).
+- **Sesión reanudable**: el token se guarda en el móvil y se presenta como `?s=`; una
+  reconexión renueva el reloj de inactividad en vez de juzgarse como caducada.
+- **«Cerrar sesión»** (arriba a la derecha, solo con sesión activa) revoca el token en
+  `voz-mfa`. Antes el enlace borraba una cookie que la app ya no usaba: el token seguía
+  válido y «cerrar sesión» era cosmético.
+
+### Corregido
+- **Colgar vuelve a ser colgar**: cierra socket, micro y reproducción, y conserva la
+  sesión, para poder callar la respuesta sin volver a autenticarse.
+- Captura de audio con `ScriptProcessor` en vez de `AudioWorklet`: en WebKit/iOS el
+  worklet entregaba buffers a cero y el ASR recibía silencio.
+
 ## 0.2.1 — 2026-11-11
 
 ### Añadido
@@ -21,10 +43,10 @@
 - **`voz-mfa`, servicio de autenticación fuera de banda** (nuevo contenedor): genera
   un número de 6 cifras por desafío, lo entrega por Telegram y guarda solo
   `sha256(nonce:código)`. El número nunca cruza hacia la web. 5 minutos de vida,
-  5 intentos, un solo uso (FR-001..FR-006).
-- Desafío creado al abrir la página; el transcript hablado se valida en
-  `POST /api/auth/verify` y un acierto emite una sesión con TTL deslizante de 15
-  minutos renovada en cada turno (FR-005, FR-009).
+  10 intentos, un solo uso (FR-001..FR-006).
+- Desafío creado en el primer toque del micrófono (no al abrir la página); el
+  transcript hablado se canjea en el relay y un acierto emite una sesión con TTL
+  deslizante de 15 minutos renovada en cada turno (FR-005, FR-009).
 - Relay al **perfil Hermes `voz`**: `voz` habla con el API server del gateway
   (`/p/voz/v1`) en lugar del proveedor del modelo, así que puede ejecutar
   herramientas y no guarda ninguna clave de modelo (FR-007).

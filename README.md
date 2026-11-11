@@ -125,15 +125,31 @@ un mensaje en el teléfono. Reglas de emisión:
 
 El usuario lo dice en voz alta en la misma frase que su petición (*"Necesitas
 autenticarte… código 4 7 2 9 1 3, enciende la música"*); el transcript completo
-se manda a `POST /api/auth/verify`, que busca un tramo de 6 dígitos válido. Con
+se verifica **en el relay**: no hay una petición del navegador que pueda perderse, el
+mismo servidor que ya tiene el transcript canjea el código y adopta la sesión. Busca un
+tramo de 6 dígitos válido (en dígitos o en palabras). Con
 acierto, el desafío se quema y se emite una sesión con **TTL deslizante de 15
-minutos** (`VOZ_IDLE_MINUTES`), renovada en cada turno. Si el código falla, el
+minutos** (`VOZ_IDLE_MINUTES`), renovada en cada turno y **también al reconectar**
+(una reconexión es actividad, no una sesión nueva). El token se guarda en el móvil y se
+presenta como `?s=` al reconectar, así que recargar no pide otro código.
+
+Si la frase es **solo el código**, la respuesta es una palabra: «Autenticado.». No se
+manda al perfil, porque no hay nada que preguntar.
+
+Dos controles distintos, a propósito:
+
+- **Colgar** termina la llamada (socket, micro, reproducción) y **conserva** la sesión:
+  volver a tocar el micro continúa sin código.
+- **Cerrar sesión** (arriba a la derecha, solo visible con sesión activa) **revoca** el
+  token en `voz-mfa` y lo borra del móvil.
+
+Si el código falla, el
 desafío muere y la app genera otro sin recargar.
 
 La app solo dice dos frases: **«Necesitas autenticarte.»** y **«Error en la
 autenticación.»**. Nada más: no explica dónde está el número ni qué hacer.
 
-Límites: 5 intentos por desafío (`MFA_MAX_ATTEMPTS`), 5 minutos de vida
+Límites: 10 intentos por desafío (`MFA_MAX_ATTEMPTS`), 10 minutos de vida
 (`MFA_TTL_SECONDS`), un solo uso. Si Telegram no está configurado, el desafío se
 crea y el outbox registra `sent=0` (modo prueba, falla cerrado).
 
