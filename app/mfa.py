@@ -112,6 +112,20 @@ async def verify(token: str, challenge_id: str | None = None) -> Verdict:
     return Verdict(False, str(reason))
 
 
+async def revoke(session: str | None) -> bool:
+    """Kill a session server-side. Returns True when voz-mfa acknowledged it."""
+    if not session:
+        return False
+    try:
+        response = await client().post(f"{os.environ.get('MFA_URL', MFA_URL).rstrip('/')}"
+                                       "/api/session/revoke",
+                                       headers={"x-voz-session": session})
+        return response.status_code == 200
+    except Exception as error:  # noqa: BLE001
+        print(f"mfa: revoke failed: {error!r}", file=sys.stderr, flush=True)
+        return False
+
+
 async def session_ok(session: str | None, *, touch: bool = True) -> bool:
     if not session:
         return False

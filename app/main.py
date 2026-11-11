@@ -156,7 +156,15 @@ async def session_state(request: Request):
 
 
 @app.get("/logout")
-async def logout():
+async def logout(request: Request):
+    """End this device's session for real, not just forget the cookie.
+
+    Clearing the cookie alone is theatre: the token stays valid on the server, so a
+    stolen copy keeps working. This revokes it in voz-mfa as well.
+    """
+    token = request.cookies.get(COOKIE) or request.query_params.get("s") or ""
+    if token:
+        await MFA.revoke(token)
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(COOKIE, path="/")
     return response

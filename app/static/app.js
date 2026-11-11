@@ -504,6 +504,24 @@
 
   hangup.addEventListener('click', (event) => { event.stopPropagation(); stop(false); });
 
+  const logoutEl = $('logout');
+  if (logoutEl) {
+    logoutEl.addEventListener('click', async (event) => {
+      event.preventDefault();
+      const token = _session || (function () { try { return localStorage.getItem('voz.session') || ''; } catch (e) { return ''; } })();
+      try {
+        await fetch('/logout' + (token ? `?s=${encodeURIComponent(token)}` : ''), { credentials: 'same-origin' });
+      } catch (e) { /* revoking locally still matters */ }
+      try { localStorage.removeItem('voz.session'); } catch (e) {}
+      _session = '';
+      challenge = null;
+      asked = false;
+      phase = 'auth';
+      if (active) stop(false);
+      location.href = '/';
+    });
+  }
+
   const settingsBtn = $('settings');
   settingsBtn.addEventListener('click', (event) => {
     event.stopPropagation();

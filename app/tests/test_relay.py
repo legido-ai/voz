@@ -180,3 +180,9 @@ def test_a_reconnect_renews_the_idle_clock():
     source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
     ws = source.split('@app.websocket("/ws")', 1)[1].split("session = Session", 1)[0]
     assert "session_ok(token, touch=True)" in ws
+
+
+def test_logout_revokes_the_session_server_side():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    body = source.split("async def logout", 1)[1].split("@app.get(\"/\"", 1)[0]
+    assert "MFA.revoke" in body            # not just a cleared cookie
