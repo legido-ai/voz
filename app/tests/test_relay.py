@@ -186,3 +186,11 @@ def test_logout_revokes_the_session_server_side():
     source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
     body = source.split("async def logout", 1)[1].split("@app.get(\"/\"", 1)[0]
     assert "MFA.revoke" in body            # not just a cleared cookie
+
+
+def test_hanging_up_ends_the_session_for_real():
+    js = open(os.path.join(APP, "static", "app.js"), encoding="utf-8").read()
+    hangup = js.split("hangup.addEventListener", 1)[1].split("stop(false);", 1)[0]
+    assert "endSession()" in hangup          # not just stop(): the token is revoked
+    end = js.split("async function endSession", 1)[1].split("\n  }", 1)[0]
+    assert "/logout" in end and "localStorage.removeItem" in end

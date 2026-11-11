@@ -502,21 +502,31 @@
     setState('listen', 'Te escucho');
   });
 
-  hangup.addEventListener('click', (event) => { event.stopPropagation(); stop(false); });
+  hangup.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    // Hanging up ends the call: the server session goes with it, so the next tap needs a
+    // fresh code. Without the revoke, the token stayed valid and "hang up" was cosmetic.
+    await endSession();
+    stop(false);
+  });
+
+  async function endSession() {
+    const token = _session || (function () { try { return localStorage.getItem('voz.session') || ''; } catch (e) { return ''; } })();
+    try {
+      await fetch('/logout' + (token ? `?s=${encodeURIComponent(token)}` : ''), { credentials: 'same-origin' });
+    } catch (e) { /* local cleanup still applies */ }
+    try { localStorage.removeItem('voz.session'); } catch (e) {}
+    _session = '';
+    challenge = null;
+    asked = false;
+    phase = 'auth';
+  }
 
   const logoutEl = $('logout');
   if (logoutEl) {
     logoutEl.addEventListener('click', async (event) => {
       event.preventDefault();
-      const token = _session || (function () { try { return localStorage.getItem('voz.session') || ''; } catch (e) { return ''; } })();
-      try {
-        await fetch('/logout' + (token ? `?s=${encodeURIComponent(token)}` : ''), { credentials: 'same-origin' });
-      } catch (e) { /* revoking locally still matters */ }
-      try { localStorage.removeItem('voz.session'); } catch (e) {}
-      _session = '';
-      challenge = null;
-      asked = false;
-      phase = 'auth';
+      await endSession();
       if (active) stop(false);
       location.href = '/';
     });
