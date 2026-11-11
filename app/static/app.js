@@ -236,9 +236,8 @@
       phase = 'auth';
       setState('idle', 'Error en la autenticación.');
     }
-    // A used, expired or exhausted challenge is dead: ask for a new one, no reload,
-    // and keep the microphone open so the user can simply say it again.
-    await newChallenge();
+    // Keep the challenge and the microphone: a wrong reading is retried against the
+    // same code (10 attempts, 10 minutes) instead of spawning a second Telegram message.
     setState('listen', 'Te escucho');
   }
 

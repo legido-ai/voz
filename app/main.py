@@ -306,10 +306,12 @@ class Session:
                 await self.interrupt(tell_client=True)
         elif event == "end":
             audio = self.vad.close()
+            print(f"turn: {len(audio) / P.IN_RATE:.2f}s of audio", flush=True)
             if len(audio) / P.IN_RATE >= MIN_UTTERANCE:
                 text = ""
                 if self.asr:
                     text = self.asr.finish(self.stream)
+                    print(f"asr: {text!r}", flush=True)
                     self.stream = self.asr.stream()
                     self.fed = 0
                 await self.start_turn(text, audio)
@@ -469,6 +471,7 @@ async def voice_socket(ws: WebSocket):
     # (spec A1). An already-authenticated client is greeted with silence.
     if not authorised:
         await session.say(MSG_AUTH, session.gen, True)
+        await session.state_to("listen")
     pending = bytearray()
     frame_bytes = P.FRAME_SAMPLES * 2
     try:

@@ -135,7 +135,8 @@ class Store:
                     (ident,),
                 ).fetchone()
             if row is None:
-                # No id from the client: match against any live challenge.
+                # An unknown or stale id must not dead-end the user: the code they read
+                # came from the newest challenge pushed to them, so fall back to it.
                 row = self.db.execute(
                     "SELECT nonce, code_hash, created, attempts, used, id FROM challenges "
                     "WHERE used=0 AND created > ? ORDER BY created DESC LIMIT 1",
