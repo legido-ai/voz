@@ -38,6 +38,9 @@ MIN_UTTERANCE = float(os.environ.get("VOZ_MIN_UTTERANCE", "0.35"))
 VOICE_IDS = {"es_f", "es_m", "es_m2", "es_piper_f", "es_piper_m",
              "es_carlfm", "es_davefx", "es_mls10246", "es_mls9972"}
 DECODE_EVERY = 8                      # frames of 20 ms fed to the ASR before decoding
+FIRST_TOKEN_WAIT = float(os.environ.get("VOZ_FIRST_TOKEN_WAIT", "45"))
+GAP_WAIT = float(os.environ.get("VOZ_GAP_WAIT", "45"))
+
 _DIGITS = re.compile(r"\d")
 _WORD_DIGITS = ("cero|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve")
 _SPOKEN_CODE = re.compile(rf"\b(?:{_WORD_DIGITS})(?:[,\s]+(?:{_WORD_DIGITS})){{5}}\b", re.IGNORECASE)
@@ -437,14 +440,79 @@ class Session:
                 held = ""
                 return True
 
-            async for delta in P.stream_reply(self.history):
-                if gen != self.gen:
-                    return
-                buffer += delta
-                sentences, buffer = P.split_sentences(buffer, first=first and len(buffer) < 90)
-                for sentence in sentences:
-                    if not await speak(sentence, False):
+            # A tool-using turn can take half a minute before the first token. Silence is
+            # what feels broken, so say something short when it drags — but never cancel
+            # the stream to do it: wait_for() on the generator closes it. Pump it in a
+            # task and read from a queue instead.
+            queue: asyncio.Queue = asyncio.Queue()
+
+            async def pump() -> None:
+                try:
+                    async for piece in P.stream_reply(self.history):
+                        await queue.put(("d", piece))
+                except Exception as error:  # noqa: BLE001
+                    await queue.put(("e", error))
+                finally:
+                    await queue.put(("end", None))
+
+            task = asyncio.create_task(pump())
+            started = time.monotonic()
+            announced = False
+            got_any = False
+            try:
+                while True:
+                    budget = 8.0 if not announced and not got_any else (
+                        FIRST_TOKEN_WAIT if not got_any else GAP_WAIT)
+                    try:
+                        kind, value = await asyncio.wait_for(queue.get(), timeout=budget)
+                    except asyncio.TimeoutError:
+                        if gen != self.gen:
+                            return
+                        if not announced and not got_any:
+                            announced = True
+                            print("turn: slow start, filling the silence", flush=True)
+                            await self.say("Un momento.", gen, first)
+                            first = False
+                            continue
+                        # Streaming stalled: ask again without streaming, which is the
+                        # path that does answer tool-using turns. Say it once, then speak.
+                        print(f"turn: no stream for {budget:.0f}s, asking without "
+                              "streaming", flush=True)
+                        try:
+                            whole = await P.complete(self.history)
+                        except Exception as error:  # noqa: BLE001
+                            print(f"turn: fallback failed: {error!r}", flush=True)
+                            whole = ""
+                        if gen != self.gen:
+                            return
+                        if whole:
+                            await speak(whole, True)
+                            if held:
+                                await speak("", True)
+                        else:
+                            await self.send_json({"t": "error",
+                                                  "msg": "Esto está tardando demasiado."})
+                            await self.state_to("listen")
+                            return
+                    if kind == "end":
+                        break
+                    if kind == "e":
+                        raise value
+                    delta = value
+                    if not got_any:
+                        got_any = True
+                        print(f"turn: first token after {time.monotonic() - started:.1f}s",
+                              flush=True)
+                    if gen != self.gen:
                         return
+                    buffer += delta
+                    sentences, buffer = P.split_sentences(buffer, first=first and len(buffer) < 90)
+                    for sentence in sentences:
+                        if not await speak(sentence, False):
+                            return
+            finally:
+                if not task.done():
+                    task.cancel()
             sentences, buffer = P.split_sentences(buffer, flush=True)
             for sentence in sentences:
                 if not await speak(sentence, True):

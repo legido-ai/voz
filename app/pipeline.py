@@ -302,3 +302,33 @@ async def healthy(url: str) -> bool:
         return response.status_code == 200
     except Exception:  # noqa: BLE001 - a probe
         return False
+
+async def complete(messages: list[dict], timeout: float = 180.0) -> str:
+    """Whole answer in one shot, no streaming.
+
+    The streaming path stalls on tool-using turns (nothing arrives for a minute while the
+    profile runs the tool), yet the same turn returns in ~30 s when it is not streamed.
+    So when streaming goes quiet, fall back to this instead of failing the turn.
+    """
+    if not LLM_KEY:
+        raise RuntimeError("HERMES_API_KEY is not set")
+    payload = {
+        "model": LLM_MODEL,
+        "stream": False,
+        "max_tokens": LLM_MAX_TOKENS,
+        "temperature": 0.6,
+        "chat_template_kwargs": {"thinking": False},
+        "reasoning_effort": "none",
+        "messages": [{"role": "system", "content": SYSTEM_PROMPT}, *messages[-12:]],
+    }
+    headers = {
+        "Authorization": f"Bearer {LLM_KEY}",
+        "Content-Type": "application/json",
+        "x-opencode-session": LLM_SESSION,
+    }
+    response = await client().post(f"{LLM_BASE}/chat/completions", json=payload,
+                                  headers=headers, timeout=timeout)
+    if response.status_code != 200:
+        raise RuntimeError(f"llm {response.status_code}: {await response.aread()!r:.200}")
+    data = response.json()
+    return ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""

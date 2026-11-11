@@ -221,3 +221,18 @@ def test_code_only_detection():
     assert only("es 033 758")
     assert not only("cero, tres, tres, siete, cinco, ocho, dime la capital de España")
     assert not only("¿qué necesitas?")
+
+
+def test_a_stalled_stream_never_hangs_the_turn():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    assert "FIRST_TOKEN_WAIT" in source
+    assert "asyncio.create_task(pump())" in source   # cancel-free: wait_for on the generator closed it
+    assert "Un momento." in source          # fills the silence of a slow tool turn
+    assert "Esto está tardando demasiado." in source
+
+
+def test_a_stalled_stream_falls_back_to_a_whole_answer():
+    source = open(os.path.join(APP, "main.py"), encoding="utf-8").read()
+    assert "P.complete(self.history)" in source
+    pipeline = open(os.path.join(APP, "pipeline.py"), encoding="utf-8").read()
+    assert "async def complete(" in pipeline
